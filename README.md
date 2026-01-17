@@ -5,12 +5,17 @@ A comprehensive submetering platform for property management companies to track 
 ## Features
 
 - **Multi-Property Management**: Support for 200+ properties with multiple units
+- **Database-First Architecture**: Update data directly in the database, frontend updates automatically in real-time
+- **Real-Time Updates**: Changes to the database automatically appear in the UI without page refresh
 - **Submeter Data Ingestion**: 
   - Badger Orion submeters (JSON format)
   - Chinese submetering devices (CBOR format, decoded to JSON)
 - **Admin Dashboard**: Full access to all properties, units, tenants, and utility data
-- **Tenant Portal**: Secure access for tenants to view their usage and bills
+- **Customer Statements View**: Professional table view matching Excel layouts
+- **Monthly Bills Master Sheet**: Overview of all monthly utility bills
+- **Tenant Portal**: Secure access for tenants to view their usage and bills (coming soon)
 - **Scalable Architecture**: Built with Next.js 14 and Supabase for high performance
+- **Automation-Ready**: Designed for automated data entry and tenant switching
 
 ## Tech Stack
 
@@ -64,7 +69,7 @@ npm install
    NEXT_PUBLIC_APP_URL=http://localhost:3000
    ```
 
-   ⚠️ **Important:** The `.env` file is already in `.gitignore`, so it won't be committed to git. Never share your service role key publicly!
+   **Important:** The `.env` file is already in `.gitignore`, so it won't be committed to git. Never share your service role key publicly!
 
 4. Set up the database schema:
    - Go to your Supabase project dashboard
@@ -141,11 +146,11 @@ See `supabase/schema.sql` for the complete schema with relationships and indexes
 ## Development Roadmap
 
 ### Phase 1: Foundation (Current)
-- ✅ Project setup and configuration
-- ✅ Database schema design
-- ✅ Basic admin and tenant views
-- ✅ Data ingestion API endpoints
-- ✅ CBOR decoding utilities
+- Project setup and configuration
+- Database schema design
+- Basic admin and tenant views
+- Data ingestion API endpoints
+- CBOR decoding utilities
 
 ### Phase 2: Authentication
 - [ ] Supabase Auth integration
@@ -171,6 +176,7 @@ See `supabase/schema.sql` for the complete schema with relationships and indexes
 - The system is designed to scale to 200+ properties
 - Data ingestion endpoints are ready but will need adjustment based on actual device output formats
 - Authentication is planned but not yet implemented
+- **Database-First Design**: The platform is designed so you can update data directly in Supabase, and the frontend will automatically reflect those changes in real-time. See `docs/AUTOMATION_GUIDE.md` for details.
 
 ## License
 

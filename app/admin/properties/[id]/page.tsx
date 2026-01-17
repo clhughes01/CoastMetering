@@ -18,11 +18,16 @@ export default function PropertyDetails() {
   if (loading) {
     return (
       <PageContainer>
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-center">
-            <LoadingSpinner size="lg" />
-            <p className="text-gray-500 mt-4">Loading property details...</p>
-          </div>
+        <Navbar title="Coast Metering" />
+        <div className="pt-16">
+          <MainContent>
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <div className="text-center">
+                <LoadingSpinner size="lg" />
+                <p className="text-gray-500 mt-4">Loading property details...</p>
+              </div>
+            </div>
+          </MainContent>
         </div>
       </PageContainer>
     )
@@ -31,18 +36,23 @@ export default function PropertyDetails() {
   if (error || !property) {
     return (
       <PageContainer>
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-center">
-            <p className="text-gray-500 mb-4">
-              {error ? `Error: ${error.message}` : 'Property not found'}
-            </p>
-            <Link
-              href={ROUTES.ADMIN.ROOT}
-              className="text-blue-600 hover:text-blue-900"
-            >
-              Back to Admin Dashboard
-            </Link>
-          </div>
+        <Navbar title="Coast Metering" />
+        <div className="pt-16">
+          <MainContent>
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <div className="text-center">
+                <p className="text-gray-500 mb-4">
+                  {error ? `Error: ${error.message}` : 'Property not found'}
+                </p>
+                <Link
+                  href={ROUTES.ADMIN.ROOT}
+                  className="text-blue-600 hover:text-blue-900 font-medium"
+                >
+                  Back to Admin Dashboard
+                </Link>
+              </div>
+            </div>
+          </MainContent>
         </div>
       </PageContainer>
     )
@@ -50,42 +60,49 @@ export default function PropertyDetails() {
 
   return (
     <PageContainer>
-      <Navbar title="Property Details">
-        <Link
-          href={ROUTES.ADMIN.ROOT}
-          className="text-gray-600 hover:text-gray-900"
-        >
-          ← Back
-        </Link>
-      </Navbar>
-      <MainContent>
+      <Navbar title="Coast Metering" />
+      <div className="pt-16">
+        <MainContent>
+          <div className="mb-6">
+            <Link
+              href={ROUTES.ADMIN.ROOT}
+              className="inline-flex items-center text-gray-600 hover:text-gray-900 mb-4 font-medium"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to Properties
+            </Link>
+          </div>
         {/* Property Information */}
-        <div className="bg-white rounded-lg shadow mb-6 p-6">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">
-            {property.address}
-          </h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-gray-500">City, State, ZIP</p>
-              <p className="text-base font-medium text-gray-900">
+        <div className="bg-white rounded-xl shadow-soft border border-gray-200 mb-6 p-8">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-3xl font-bold text-gray-900">
+              {property.address}
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">City, State, ZIP</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {property.city}, {property.state} {property.zip_code}
               </p>
             </div>
-            <div>
-              <p className="text-sm text-gray-500">Owner</p>
-              <p className="text-base font-medium text-gray-900">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Owner</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {property.owner_name || 'N/A'}
               </p>
             </div>
-            <div>
-              <p className="text-sm text-gray-500">Water Utility</p>
-              <p className="text-base font-medium text-gray-900">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Water Utility</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {property.water_utility || 'N/A'}
               </p>
             </div>
-            <div>
-              <p className="text-sm text-gray-500">Power Utility</p>
-              <p className="text-base font-medium text-gray-900">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Power Utility</p>
+              <p className="text-lg font-semibold text-gray-900">
                 {property.power_utility || 'N/A'}
               </p>
             </div>
@@ -93,26 +110,27 @@ export default function PropertyDetails() {
         </div>
 
         {/* Units */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="text-lg font-semibold text-gray-900">
-              Units ({property.units.length})
+        <div className="bg-white rounded-xl shadow-soft border border-gray-200">
+          <div className="px-8 py-5 border-b border-gray-200 flex justify-between items-center bg-gradient-to-r from-slate-50 to-gray-50">
+            <h3 className="text-xl font-bold text-gray-900">
+              Units <span className="text-blue-600">({property.units.length})</span>
             </h3>
             <Button onClick={() => setIsCreateUnitModalOpen(true)} size="sm">
               + Add Unit
             </Button>
           </div>
-          <div className="p-6">
+          <div className="p-8">
             {property.units.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">
-                No units found for this property
-              </p>
+              <div className="text-center py-12">
+                <p className="text-gray-500 text-lg">No units found for this property</p>
+                <p className="text-gray-400 text-sm mt-2">Add your first unit to get started</p>
+              </div>
             ) : (
               <div className="space-y-6">
                 {property.units.map((unit) => (
                   <div
                     key={unit.id}
-                    className="border border-gray-200 rounded-lg p-4"
+                    className="border border-gray-200 rounded-xl p-6 hover:border-gray-300 hover:shadow-md transition-all duration-200 bg-white"
                   >
                     <div className="flex justify-between items-start mb-4">
                       <h4 className="text-lg font-semibold text-gray-900">
@@ -267,7 +285,8 @@ export default function PropertyDetails() {
             unitNumber={selectedUnitForMeter.number}
           />
         )}
-      </MainContent>
+        </MainContent>
+      </div>
     </PageContainer>
   )
 }

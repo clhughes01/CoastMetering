@@ -30,7 +30,31 @@ export const useProperties = () => {
   }
 
   useEffect(() => {
+    // Initial load
     loadProperties()
+
+    // Subscribe to real-time changes
+    const channel = supabase
+      .channel('properties-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Listen to all changes (INSERT, UPDATE, DELETE)
+          schema: 'public',
+          table: 'properties',
+        },
+        (payload) => {
+          console.log('Properties changed:', payload)
+          // Reload properties when database changes
+          loadProperties()
+        }
+      )
+      .subscribe()
+
+    // Cleanup subscription on unmount
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   return {

@@ -13,6 +13,8 @@ export const ROUTES = {
     ROOT: '/admin',
     PROPERTIES: '/admin/properties',
     PROPERTY_DETAIL: (id: string) => `/admin/properties/${id}`,
+    STATEMENTS: '/admin/statements',
+    BILLS: '/admin/bills',
   },
   TENANT: {
     ROOT: '/tenant',

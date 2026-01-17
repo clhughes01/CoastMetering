@@ -74,6 +74,68 @@ export const useProperty = (propertyId: string | null) => {
 
   useEffect(() => {
     loadProperty()
+
+    if (!propertyId) return
+
+    // Subscribe to real-time changes for this property and related data
+    const channel = supabase
+      .channel(`property-${propertyId}-changes`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'properties',
+          filter: `id=eq.${propertyId}`,
+        },
+        () => {
+          console.log('Property changed, reloading...')
+          loadProperty()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'units',
+          filter: `property_id=eq.${propertyId}`,
+        },
+        () => {
+          console.log('Units changed, reloading...')
+          loadProperty()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tenants',
+        },
+        () => {
+          console.log('Tenants changed, reloading...')
+          loadProperty()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'meters',
+        },
+        () => {
+          console.log('Meters changed, reloading...')
+          loadProperty()
+        }
+      )
+      .subscribe()
+
+    // Cleanup subscription on unmount
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [propertyId])
 
   return {

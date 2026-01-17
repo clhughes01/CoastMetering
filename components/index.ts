@@ -9,6 +9,7 @@ export { LoadingSpinner } from './ui/LoadingSpinner'
 
 // Layout Components
 export { Navbar } from './layout/Navbar'
+export { Sidebar } from './layout/Sidebar'
 export { PageContainer } from './layout/PageContainer'
 export { MainContent } from './layout/MainContent'
 
