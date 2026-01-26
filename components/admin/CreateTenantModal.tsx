@@ -1,7 +1,16 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Button } from '@/components'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 interface CreateTenantModalProps {
   isOpen: boolean
@@ -81,118 +90,106 @@ export const CreateTenantModal = ({
     }
   }
 
-  if (!isOpen) return null
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">Add Tenant</h2>
-              <p className="text-sm text-gray-500 mt-1">Unit {unitNumber}</p>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600"
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add Tenant</DialogTitle>
+          <DialogDescription>
+            Add a new tenant to Unit {unitNumber}. All fields marked with * are required.
+          </DialogDescription>
+        </DialogHeader>
+
+        {error && (
+          <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="name">
+              Full Name <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="name"
+              type="text"
+              required
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              placeholder="Luis David Zacarias Simon"
               disabled={loading}
-            >
-              <span className="text-2xl">&times;</span>
-            </button>
+            />
           </div>
 
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm">
-              {error}
-            </div>
-          )}
+          <div>
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              placeholder="tenant@example.com"
+              disabled={loading}
+            />
+          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Full Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                placeholder="Luis David Zacarias Simon"
-              />
-            </div>
+          <div>
+            <Label htmlFor="phone">Phone Number</Label>
+            <Input
+              id="phone"
+              type="tel"
+              value={formData.phone}
+              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+              placeholder="(555) 123-4567"
+              disabled={loading}
+            />
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                placeholder="tenant@example.com"
-              />
-            </div>
+          <div>
+            <Label htmlFor="move_in_date">
+              Move-In Date <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="move_in_date"
+              type="date"
+              required
+              value={formData.move_in_date}
+              onChange={(e) => setFormData({ ...formData, move_in_date: e.target.value })}
+              disabled={loading}
+            />
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Phone Number
-              </label>
-              <input
-                type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                placeholder="(555) 123-4567"
-              />
-            </div>
+          <div>
+            <Label htmlFor="account_number">Account Number</Label>
+            <Input
+              id="account_number"
+              type="text"
+              value={formData.account_number}
+              onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
+              placeholder="1005"
+              disabled={loading}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Unique account identifier for billing purposes
+            </p>
+          </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Move-In Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                required
-                value={formData.move_in_date}
-                onChange={(e) => setFormData({ ...formData, move_in_date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Account Number
-              </label>
-              <input
-                type="text"
-                value={formData.account_number}
-                onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                placeholder="1005"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Unique account identifier for billing purposes
-              </p>
-            </div>
-
-            <div className="flex justify-end space-x-3 pt-4">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={onClose}
-                disabled={loading}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? 'Creating...' : 'Add Tenant'}
-              </Button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={loading}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? 'Creating...' : 'Add Tenant'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

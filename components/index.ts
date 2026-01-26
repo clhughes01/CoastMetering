@@ -4,7 +4,7 @@
  */
 
 // UI Components
-export { Button } from './ui/Button'
+export { Button } from './ui/button'
 export { LoadingSpinner } from './ui/LoadingSpinner'
 
 // Layout Components
@@ -13,7 +13,7 @@ export { Sidebar } from './layout/Sidebar'
 export { PageContainer } from './layout/PageContainer'
 export { MainContent } from './layout/MainContent'
 
-// Admin Components
+// Admin/Manager Components
 export { CreatePropertyModal } from './admin/CreatePropertyModal'
 export { CreateUnitModal } from './admin/CreateUnitModal'
 export { CreateTenantModal } from './admin/CreateTenantModal'

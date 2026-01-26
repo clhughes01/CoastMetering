@@ -1,7 +1,23 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Button } from '@/components'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { METER_TYPES, DEVICE_TYPES } from '@/lib/constants'
 
 interface CreateMeterModalProps {
@@ -79,123 +95,120 @@ export const CreateMeterModal = ({
     }
   }
 
-  if (!isOpen) return null
-
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">Add Meter</h2>
-              <p className="text-sm text-gray-500 mt-1">Unit {unitNumber}</p>
-            </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600"
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add Meter</DialogTitle>
+          <DialogDescription>
+            Add a new meter to Unit {unitNumber}. Each unit can have one meter per type (water, power, gas).
+          </DialogDescription>
+        </DialogHeader>
+
+        {error && (
+          <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md text-destructive text-sm">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="meter_number">
+              Meter Number <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="meter_number"
+              type="text"
+              required
+              value={formData.meter_number}
+              onChange={(e) => setFormData({ ...formData, meter_number: e.target.value })}
+              placeholder="12345"
               disabled={loading}
-            >
-              <span className="text-2xl">&times;</span>
-            </button>
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Unique identifier from the submeter device
+            </p>
           </div>
 
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm">
-              {error}
+          <div>
+            <Label htmlFor="meter_type">
+              Meter Type <span className="text-destructive">*</span>
+            </Label>
+            <Select
+              required
+              value={formData.meter_type}
+              onValueChange={(value) => setFormData({ ...formData, meter_type: value as 'water' | 'power' | 'gas' })}
+              disabled={loading}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {METER_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label htmlFor="device_type">Device Type</Label>
+            <Select
+              value={formData.device_type || ''}
+              onValueChange={(value) => setFormData({ ...formData, device_type: value as 'badger_orion' | 'chinese_device' | '' })}
+              disabled={loading}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Manual / Other" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Manual / Other</SelectItem>
+                {DEVICE_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type === 'badger_orion' ? 'Badger Orion' : 'Chinese Device'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Select if this meter is connected to an automated device
+            </p>
+          </div>
+
+          {formData.device_type && (
+            <div>
+              <Label htmlFor="device_identifier">Device Identifier</Label>
+              <Input
+                id="device_identifier"
+                type="text"
+                value={formData.device_identifier}
+                onChange={(e) => setFormData({ ...formData, device_identifier: e.target.value })}
+                placeholder="Device serial number or ID"
+                disabled={loading}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Optional: Device-specific identifier for automated data ingestion
+              </p>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Meter Number <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                value={formData.meter_number}
-                onChange={(e) => setFormData({ ...formData, meter_number: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                placeholder="12345"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Unique identifier from the submeter device
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Meter Type <span className="text-red-500">*</span>
-              </label>
-              <select
-                required
-                value={formData.meter_type}
-                onChange={(e) => setFormData({ ...formData, meter_type: e.target.value as 'water' | 'power' | 'gas' })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900"
-              >
-                {METER_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {type.charAt(0).toUpperCase() + type.slice(1)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Device Type
-              </label>
-              <select
-                value={formData.device_type}
-                onChange={(e) => setFormData({ ...formData, device_type: e.target.value as 'badger_orion' | 'chinese_device' | '' })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-900"
-              >
-                <option value="">Manual / Other</option>
-                {DEVICE_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {type === 'badger_orion' ? 'Badger Orion' : 'Chinese Device'}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Select if this meter is connected to an automated device
-              </p>
-            </div>
-
-            {formData.device_type && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Device Identifier
-                </label>
-                <input
-                  type="text"
-                  value={formData.device_identifier}
-                  onChange={(e) => setFormData({ ...formData, device_identifier: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                  placeholder="Device serial number or ID"
-                />
-                <p className="mt-1 text-xs text-gray-500">
-                  Optional: Device-specific identifier for automated data ingestion
-                </p>
-              </div>
-            )}
-
-            <div className="flex justify-end space-x-3 pt-4">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={onClose}
-                disabled={loading}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? 'Creating...' : 'Add Meter'}
-              </Button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
+          <div className="flex justify-end space-x-3 pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={loading}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? 'Creating...' : 'Add Meter'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
