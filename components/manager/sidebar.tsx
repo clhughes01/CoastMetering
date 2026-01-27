@@ -12,7 +12,8 @@ import {
   Settings,
   ChevronLeft,
   Menu,
-  LayoutDashboard
+  LayoutDashboard,
+  Scan
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -42,6 +43,7 @@ const navigation = [
     title: "MONTHLY UTILITY BILLS",
     items: [
       { name: "Utility Statements", href: "/manager/utility-bills", icon: Receipt },
+      { name: "Textract Test", href: "/manager/textract-test", icon: Scan },
     ]
   },
   {
