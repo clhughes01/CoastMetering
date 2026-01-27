@@ -82,12 +82,12 @@ export default function UtilityBillsPage() {
 
   // Calculate summary stats from data
   const totalBilled = data.reduce((sum, bill) => {
-    const amount = Number.parseFloat(bill.totalAmount.replace(/[$,]/g, ''))
+    const amount = Number.parseFloat(bill.totalAmount.replace(/[$,]/g, '')) || 0
     return sum + amount
   }, 0)
-  const totalUnits = data.reduce((sum, bill) => sum + bill.numberOfUnits, 0)
-  const avgMonthly = totalBilled / data.length
-  const avgUnits = Math.round(totalUnits / data.length)
+  const totalUnits = data.reduce((sum, bill) => sum + (bill.numberOfUnits || 0), 0)
+  const avgMonthly = data.length > 0 ? totalBilled / data.length : 0
+  const avgUnits = data.length > 0 ? Math.round(totalUnits / data.length) : 0
 
   return (
     <div className="flex flex-col min-h-screen">

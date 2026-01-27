@@ -1,15 +1,145 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { User, Building, Bell, Shield, Save } from "lucide-react"
+import { User, Building, Bell, Shield, Save, Loader2 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
+import { getCurrentUser } from "@/lib/auth"
+import { createSupabaseClient } from "@/lib/supabase/client"
+import type { User as UserType } from "@/lib/types"
 
 export default function SettingsPage() {
+  const [user, setUser] = useState<UserType | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+  
+  // Profile form state
+  const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
+  const [phone, setPhone] = useState("")
+  const [companyName, setCompanyName] = useState("")
+  
+  // Password form state
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+
+  useEffect(() => {
+    loadUser()
+  }, [])
+
+  const loadUser = async () => {
+    try {
+      const currentUser = await getCurrentUser()
+      if (currentUser) {
+        setUser(currentUser)
+        setName(currentUser.name || "")
+        setEmail(currentUser.email || "")
+        setPhone(currentUser.phone || "")
+        setCompanyName(currentUser.companyName || "")
+      }
+    } catch (error) {
+      console.error('Error loading user:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSaveProfile = async () => {
+    if (!user) return
+    
+    setSaving(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      const response = await fetch('/api/auth/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          name: name.trim(),
+          phone: phone.trim() || null,
+          companyName: companyName.trim() || null,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update profile')
+      }
+
+      setSuccess('Profile updated successfully!')
+      // Reload user to get updated data
+      await loadUser()
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      setError(err.message || 'Failed to update profile')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleUpdatePassword = async () => {
+    if (!user) return
+    
+    if (newPassword.length < 6) {
+      setError('Password must be at least 6 characters')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError('New passwords do not match')
+      return
+    }
+
+    setSaving(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      const response = await fetch('/api/auth/update-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          currentPassword,
+          newPassword,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update password')
+      }
+
+      setSuccess('Password updated successfully!')
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+      
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err: any) {
+      setError(err.message || 'Failed to update password')
+    } finally {
+      setSaving(false)
+    }
+  }
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
@@ -45,28 +175,70 @@ export default function SettingsPage() {
                 <CardDescription>Update your personal details and contact information.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="firstName">First Name</Label>
-                    <Input id="firstName" defaultValue="John" />
+                {error && (
+                  <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md">
+                    {error}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName">Last Name</Label>
-                    <Input id="lastName" defaultValue="Smith" />
+                )}
+                {success && (
+                  <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                    {success}
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" defaultValue="john.smith@coastmetering.com" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number</Label>
-                  <Input id="phone" type="tel" defaultValue="(760) 555-0123" />
-                </div>
-                <Button>
-                  <Save className="h-4 w-4 mr-2" />
-                  Save Changes
-                </Button>
+                )}
+                
+                {loading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Full Name</Label>
+                      <Input 
+                        id="name" 
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="Enter your full name"
+                        className="text-gray-900 bg-white"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input 
+                        id="email" 
+                        type="email" 
+                        value={email}
+                        disabled
+                        className="bg-muted text-muted-foreground"
+                      />
+                      <p className="text-xs text-muted-foreground">Email cannot be changed</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Phone Number</Label>
+                      <Input 
+                        id="phone" 
+                        type="tel" 
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="(760) 555-0123"
+                        className="text-gray-900 bg-white"
+                      />
+                    </div>
+                    <Button onClick={handleSaveProfile} disabled={saving}>
+                      {saving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="h-4 w-4 mr-2" />
+                          Save Changes
+                        </>
+                      )}
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -75,35 +247,51 @@ export default function SettingsPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Company Information</CardTitle>
-                <CardDescription>Manage your company details and billing address.</CardDescription>
+                <CardDescription>Manage your company details.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="space-y-2">
-                  <Label htmlFor="companyName">Company Name</Label>
-                  <Input id="companyName" defaultValue="Coast Property Management" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="address">Street Address</Label>
-                  <Input id="address" defaultValue="123 Coastal Drive" />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="city">City</Label>
-                    <Input id="city" defaultValue="San Diego" />
+                {error && (
+                  <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md">
+                    {error}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="state">State</Label>
-                    <Input id="state" defaultValue="CA" />
+                )}
+                {success && (
+                  <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                    {success}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="zip">ZIP Code</Label>
-                    <Input id="zip" defaultValue="92101" />
+                )}
+                
+                {loading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
-                </div>
-                <Button>
-                  <Save className="h-4 w-4 mr-2" />
-                  Save Changes
-                </Button>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="companyName">Company Name</Label>
+                      <Input 
+                        id="companyName" 
+                        value={companyName}
+                        onChange={(e) => setCompanyName(e.target.value)}
+                        placeholder="Coast Property Management"
+                        className="text-gray-900 bg-white"
+                      />
+                    </div>
+                    <Button onClick={handleSaveProfile} disabled={saving}>
+                      {saving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="h-4 w-4 mr-2" />
+                          Save Changes
+                        </>
+                      )}
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -158,21 +346,62 @@ export default function SettingsPage() {
                 <CardDescription>Manage your password and account security.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                {error && (
+                  <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md">
+                    {error}
+                  </div>
+                )}
+                {success && (
+                  <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                    {success}
+                  </div>
+                )}
+                
                 <div className="space-y-2">
                   <Label htmlFor="currentPassword">Current Password</Label>
-                  <Input id="currentPassword" type="password" />
+                  <Input 
+                    id="currentPassword" 
+                    type="password" 
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    className="text-gray-900 bg-white"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="newPassword">New Password</Label>
-                  <Input id="newPassword" type="password" />
+                  <Input 
+                    id="newPassword" 
+                    type="password" 
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new password (min 6 characters)"
+                    className="text-gray-900 bg-white"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                  <Input id="confirmPassword" type="password" />
+                  <Input 
+                    id="confirmPassword" 
+                    type="password" 
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="text-gray-900 bg-white"
+                  />
                 </div>
-                <Button>
-                  <Shield className="h-4 w-4 mr-2" />
-                  Update Password
+                <Button onClick={handleUpdatePassword} disabled={saving}>
+                  {saving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="h-4 w-4 mr-2" />
+                      Update Password
+                    </>
+                  )}
                 </Button>
               </CardContent>
             </Card>

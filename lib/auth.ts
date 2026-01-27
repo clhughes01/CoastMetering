@@ -14,6 +14,28 @@ export async function signUp(email: string, password: string, name?: string): Pr
   try {
     const supabase = createSupabaseClient()
     
+    // Check if email already exists in user_profiles table
+    // Use API route to check (bypasses RLS)
+    try {
+      const checkResponse = await fetch('/api/auth/check-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: email.toLowerCase().trim() }),
+      })
+
+      if (checkResponse.ok) {
+        const { exists } = await checkResponse.json()
+        if (exists) {
+          return { user: null, error: 'An account with this email already exists. Please sign in instead.' }
+        }
+      }
+    } catch (checkError) {
+      // If check fails, continue with signup (Supabase will handle duplicate check)
+      console.warn('Could not check email existence:', checkError)
+    }
+
     // Determine role based on email domain
     const role = email.includes('@coastmetering.com') || email.includes('@coastmgmt.') 
       ? 'manager' 
@@ -21,7 +43,7 @@ export async function signUp(email: string, password: string, name?: string): Pr
 
     // Sign up with Supabase Auth
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: email.toLowerCase().trim(),
       password,
       options: {
         data: {
@@ -32,6 +54,16 @@ export async function signUp(email: string, password: string, name?: string): Pr
     })
 
     if (error) {
+      // Check if error is due to existing user
+      const errorMsg = error.message.toLowerCase()
+      if (errorMsg.includes('already registered') || 
+          errorMsg.includes('already exists') || 
+          errorMsg.includes('user already registered') ||
+          errorMsg.includes('email address is already in use') ||
+          error.code === 'signup_disabled' ||
+          error.status === 400) {
+        return { user: null, error: 'An account with this email already exists. Please sign in instead.' }
+      }
       return { user: null, error: error.message }
     }
 
