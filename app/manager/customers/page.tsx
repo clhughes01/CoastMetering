@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Download, Plus, Users } from "lucide-react"
 import { getCustomers } from "@/lib/data"
 import type { Customer } from "@/lib/types"
-import { CreatePropertyModal, CreateUnitModal, CreateTenantModal, CreateMeterModal } from "@/components/admin"
+import { CreatePropertyModal, CreateUnitModal, CreateTenantModal, CreateMeterModal, EditTenantModal } from "@/components/admin"
 
 // Column definitions - these stay the same regardless of data source
 const columns = [
@@ -28,12 +28,13 @@ const columns = [
 export default function CustomersPage() {
   const [data, setData] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
-  const [isCreatePropertyModalOpen, setIsCreatePropertyModalOpen] = useState(false)
   const [isCreateUnitModalOpen, setIsCreateUnitModalOpen] = useState(false)
   const [isCreateTenantModalOpen, setIsCreateTenantModalOpen] = useState(false)
   const [isCreateMeterModalOpen, setIsCreateMeterModalOpen] = useState(false)
+  const [isEditTenantModalOpen, setIsEditTenantModalOpen] = useState(false)
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null)
   const [selectedUnit, setSelectedUnit] = useState<{ id: string; number: string } | null>(null)
+  const [selectedTenant, setSelectedTenant] = useState<any>(null)
 
   useEffect(() => {
     loadCustomers()
@@ -83,10 +84,6 @@ export default function CustomersPage() {
                 </Select>
               </div>
               <div className="flex items-center gap-3">
-                <Button variant="outline" onClick={() => setIsCreatePropertyModalOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Property
-                </Button>
                 <Button variant="outline" onClick={() => setIsCreateTenantModalOpen(true)}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add Tenant
@@ -118,14 +115,6 @@ export default function CustomersPage() {
         </Card>
 
         {/* Modals */}
-        <CreatePropertyModal
-          isOpen={isCreatePropertyModalOpen}
-          onClose={() => setIsCreatePropertyModalOpen(false)}
-          onSuccess={() => {
-            loadCustomers()
-            setIsCreatePropertyModalOpen(false)
-          }}
-        />
         {selectedPropertyId && (
           <CreateUnitModal
             isOpen={isCreateUnitModalOpen}
@@ -141,38 +130,49 @@ export default function CustomersPage() {
             propertyId={selectedPropertyId}
           />
         )}
+        <CreateTenantModal
+          isOpen={isCreateTenantModalOpen}
+          onClose={() => {
+            setIsCreateTenantModalOpen(false)
+            setSelectedUnit(null)
+          }}
+          onSuccess={() => {
+            loadCustomers()
+            setIsCreateTenantModalOpen(false)
+            setSelectedUnit(null)
+          }}
+          unitId={selectedUnit?.id}
+          unitNumber={selectedUnit?.number}
+        />
         {selectedUnit && (
-          <>
-            <CreateTenantModal
-              isOpen={isCreateTenantModalOpen}
-              onClose={() => {
-                setIsCreateTenantModalOpen(false)
-                setSelectedUnit(null)
-              }}
-              onSuccess={() => {
-                loadCustomers()
-                setIsCreateTenantModalOpen(false)
-                setSelectedUnit(null)
-              }}
-              unitId={selectedUnit.id}
-              unitNumber={selectedUnit.number}
-            />
-            <CreateMeterModal
-              isOpen={isCreateMeterModalOpen}
-              onClose={() => {
-                setIsCreateMeterModalOpen(false)
-                setSelectedUnit(null)
-              }}
-              onSuccess={() => {
-                loadCustomers()
-                setIsCreateMeterModalOpen(false)
-                setSelectedUnit(null)
-              }}
-              unitId={selectedUnit.id}
-              unitNumber={selectedUnit.number}
-            />
-          </>
+          <CreateMeterModal
+            isOpen={isCreateMeterModalOpen}
+            onClose={() => {
+              setIsCreateMeterModalOpen(false)
+              setSelectedUnit(null)
+            }}
+            onSuccess={() => {
+              loadCustomers()
+              setIsCreateMeterModalOpen(false)
+              setSelectedUnit(null)
+            }}
+            unitId={selectedUnit.id}
+            unitNumber={selectedUnit.number}
+          />
         )}
+        <EditTenantModal
+          isOpen={isEditTenantModalOpen}
+          onClose={() => {
+            setIsEditTenantModalOpen(false)
+            setSelectedTenant(null)
+          }}
+          onSuccess={() => {
+            loadCustomers()
+            setIsEditTenantModalOpen(false)
+            setSelectedTenant(null)
+          }}
+          tenant={selectedTenant}
+        />
       </main>
     </div>
   )

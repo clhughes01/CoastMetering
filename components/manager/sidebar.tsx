@@ -13,7 +13,8 @@ import {
   ChevronLeft,
   Menu,
   LayoutDashboard,
-  Scan
+  Scan,
+  Building2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -29,6 +30,7 @@ const navigation = [
   {
     title: "MANAGE CUSTOMERS",
     items: [
+      { name: "Properties", href: "/manager/properties", icon: Building2 },
       { name: "Manage Customers", href: "/manager/customers", icon: Users },
     ]
   },

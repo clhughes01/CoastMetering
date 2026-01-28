@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,20 +14,39 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
-interface CreatePropertyModalProps {
+interface EditPropertyModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
+  property: {
+    id: string
+    address: string
+    city: string
+    state: string
+    zip_code: string
+    owner_name: string | null
+    water_utility: string | null
+    power_utility: string | null
+    gas_utility: string | null
+  } | null
 }
 
-export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
+interface Unit {
+  id: string
+  unit_number: string
+}
+
+export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  property,
 }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [units, setUnits] = useState<string[]>([''])
+  const [units, setUnits] = useState<Unit[]>([])
+  const [loadingUnits, setLoadingUnits] = useState(false)
+  const [newUnits, setNewUnits] = useState<string[]>([''])
   const [formData, setFormData] = useState({
     address: '',
     city: '',
@@ -39,108 +58,126 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
     gas_utility: '',
   })
 
-  const addUnit = () => {
-    setUnits([...units, ''])
+  useEffect(() => {
+    if (property && isOpen) {
+      setFormData({
+        address: property.address || '',
+        city: property.city || '',
+        state: property.state || '',
+        zip_code: property.zip_code || '',
+        owner_name: property.owner_name || '',
+        water_utility: property.water_utility || '',
+        power_utility: property.power_utility || '',
+        gas_utility: property.gas_utility || '',
+      })
+      loadUnits()
+      setNewUnits([''])
+    }
+  }, [property, isOpen])
+
+  const loadUnits = async () => {
+    if (!property) return
+    try {
+      setLoadingUnits(true)
+      const response = await fetch(`/api/units/list?property_id=${property.id}`)
+      const result = await response.json()
+      
+      if (result.success) {
+        setUnits(result.data || [])
+      }
+    } catch (err) {
+      console.error('Error loading units:', err)
+    } finally {
+      setLoadingUnits(false)
+    }
   }
 
-  const removeUnit = (index: number) => {
-    setUnits(units.filter((_, i) => i !== index))
+  const addNewUnit = () => {
+    setNewUnits([...newUnits, ''])
   }
 
-  const updateUnit = (index: number, value: string) => {
-    const newUnits = [...units]
-    newUnits[index] = value
-    setUnits(newUnits)
+  const removeNewUnit = (index: number) => {
+    setNewUnits(newUnits.filter((_, i) => i !== index))
+  }
+
+  const updateNewUnit = (index: number, value: string) => {
+    const updated = [...newUnits]
+    updated[index] = value
+    setNewUnits(updated)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!property) return
+
     setLoading(true)
     setError(null)
 
-    // Filter out empty units
-    const validUnits = units.filter(unit => unit.trim() !== '')
-
-    if (validUnits.length === 0) {
-      setError('Please add at least one unit to the property')
-      setLoading(false)
-      return
-    }
-
     try {
-      // First, create the property
-      const propertyResponse = await fetch('/api/properties/create', {
-        method: 'POST',
+      // Update property
+      const propertyResponse = await fetch('/api/properties/update', {
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          property_id: property.id,
+          ...formData,
+        }),
       })
 
       const propertyResult = await propertyResponse.json()
 
       if (!propertyResponse.ok) {
-        throw new Error(propertyResult.details || propertyResult.error || 'Failed to create property')
+        throw new Error(propertyResult.details || propertyResult.error || 'Failed to update property')
       }
 
-      const propertyId = propertyResult.data.id
+      // Add new units if any
+      const validNewUnits = newUnits.filter(unit => unit.trim() !== '')
+      if (validNewUnits.length > 0) {
+        const unitPromises = validNewUnits.map(unitNumber =>
+          fetch('/api/units/create', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              property_id: property.id,
+              unit_number: unitNumber.trim(),
+            }),
+          })
+        )
 
-      // Then, create all units
-      const unitPromises = validUnits.map(unitNumber =>
-        fetch('/api/units/create', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            property_id: propertyId,
-            unit_number: unitNumber.trim(),
-          }),
-        })
-      )
+        const unitResults = await Promise.all(unitPromises)
+        const unitErrors = await Promise.all(unitResults.map(r => r.json()))
 
-      const unitResults = await Promise.all(unitPromises)
-      const unitErrors = await Promise.all(unitResults.map(r => r.json()))
-
-      // Check if any units failed to create
-      const failedUnits = unitErrors.filter((result, index) => !unitResults[index].ok)
-      if (failedUnits.length > 0) {
-        console.warn('Some units failed to create:', failedUnits)
-        // Property was created, but some units failed - show warning but continue
-        setError(`Property created, but some units failed: ${failedUnits.map(e => e.error || e.details).join(', ')}`)
+        const failedUnits = unitErrors.filter((result, index) => !unitResults[index].ok)
+        if (failedUnits.length > 0) {
+          console.warn('Some units failed to create:', failedUnits)
+          setError(`Property updated, but some units failed: ${failedUnits.map(e => e.error || e.details).join(', ')}`)
+        }
       }
-
-      // Reset form
-      setFormData({
-        address: '',
-        city: '',
-        state: '',
-        zip_code: '',
-        owner_name: '',
-        water_utility: '',
-        power_utility: '',
-        gas_utility: '',
-      })
-      setUnits([''])
 
       onSuccess()
       onClose()
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to create property'
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update property'
       setError(errorMessage)
-      console.error('Error creating property:', err)
+      console.error('Error updating property:', err)
     } finally {
       setLoading(false)
     }
   }
 
+  if (!property) return null
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create New Property</DialogTitle>
+          <DialogTitle>Edit Property</DialogTitle>
           <DialogDescription>
-            Add a new property to the system. All fields marked with * are required.
+            Update property information and add new units.
           </DialogDescription>
         </DialogHeader>
 
@@ -161,7 +198,6 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               required
               value={formData.address}
               onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              placeholder="1120 East Grand Avenue"
               disabled={loading}
             />
           </div>
@@ -177,7 +213,6 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                 required
                 value={formData.city}
                 onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                placeholder="Escondido"
                 disabled={loading}
               />
             </div>
@@ -211,7 +246,6 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                 required
                 value={formData.zip_code}
                 onChange={(e) => setFormData({ ...formData, zip_code: e.target.value })}
-                placeholder="92025"
                 disabled={loading}
               />
             </div>
@@ -224,7 +258,6 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               type="text"
               value={formData.owner_name}
               onChange={(e) => setFormData({ ...formData, owner_name: e.target.value })}
-              placeholder="Farshin"
               disabled={loading}
             />
           </div>
@@ -237,7 +270,6 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                 type="text"
                 value={formData.water_utility}
                 onChange={(e) => setFormData({ ...formData, water_utility: e.target.value })}
-                placeholder="Escondido Water"
                 disabled={loading}
               />
             </div>
@@ -248,7 +280,6 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                 type="text"
                 value={formData.power_utility}
                 onChange={(e) => setFormData({ ...formData, power_utility: e.target.value })}
-                placeholder="SDG&E"
                 disabled={loading}
               />
             </div>
@@ -259,22 +290,38 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                 type="text"
                 value={formData.gas_utility}
                 onChange={(e) => setFormData({ ...formData, gas_utility: e.target.value })}
-                placeholder="SDG&E"
                 disabled={loading}
               />
             </div>
           </div>
 
+          {/* Existing Units */}
+          <div className="border-t pt-4">
+            <Label className="mb-3 block">Existing Units</Label>
+            {loadingUnits ? (
+              <p className="text-sm text-muted-foreground">Loading units...</p>
+            ) : units.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No units found for this property.</p>
+            ) : (
+              <div className="space-y-2">
+                {units.map((unit) => (
+                  <div key={unit.id} className="flex items-center gap-2 p-2 bg-muted/30 rounded">
+                    <span className="text-sm font-medium">Unit {unit.unit_number}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add New Units */}
           <div className="border-t pt-4">
             <div className="flex items-center justify-between mb-3">
-              <Label>
-                Units <span className="text-destructive">*</span>
-              </Label>
+              <Label>Add New Units</Label>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={addUnit}
+                onClick={addNewUnit}
                 disabled={loading}
                 className="text-xs"
               >
@@ -283,22 +330,22 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               </Button>
             </div>
             <div className="space-y-2">
-              {units.map((unit, index) => (
+              {newUnits.map((unit, index) => (
                 <div key={index} className="flex items-center gap-2">
                   <Input
                     type="text"
                     value={unit}
-                    onChange={(e) => updateUnit(index, e.target.value)}
+                    onChange={(e) => updateNewUnit(index, e.target.value)}
                     placeholder={`Unit ${index + 1} (e.g., 1118, A1, Unit 1)`}
                     disabled={loading}
                     className="text-gray-900 bg-white"
                   />
-                  {units.length > 1 && (
+                  {newUnits.length > 1 && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      onClick={() => removeUnit(index)}
+                      onClick={() => removeNewUnit(index)}
                       disabled={loading}
                       className="h-10 w-10 shrink-0"
                     >
@@ -309,7 +356,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               ))}
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Add at least one unit to this property. You can add more units later.
+              Add new units to this property. Leave empty if you don't want to add any.
             </p>
           </div>
 
@@ -323,7 +370,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? 'Creating...' : 'Create Property'}
+              {loading ? 'Updating...' : 'Update Property'}
             </Button>
           </div>
         </form>

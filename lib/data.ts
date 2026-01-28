@@ -156,6 +156,7 @@ export async function getCustomers(): Promise<Customer[]> {
           )
         )
       `)
+      .is('move_out_date', null) // Only get active tenants (no move_out_date)
       .order('created_at', { ascending: false })
 
     if (error) {
