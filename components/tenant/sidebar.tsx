@@ -80,19 +80,25 @@ export function TenantSidebar({ className }: SidebarProps) {
         className
       )}>
         <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-4 border-b border-sidebar-border">
-            <Link href="/tenant/dashboard" className="flex items-center gap-2">
+          {/* Logo bar - white to match Dashboard header */}
+          <div className="flex items-center justify-between h-16 px-3 bg-card border-b border-border">
+            <Link
+              href="/tenant/tenant.new/dashboard"
+              className={cn(
+                "flex items-center min-w-0 rounded-lg transition-opacity hover:opacity-90",
+                collapsed ? "justify-center w-10 h-10" : "gap-2 flex-1 py-1"
+              )}
+            >
               {collapsed ? (
-                <LogoIcon className="w-8 h-8" />
+                <LogoIcon context="sidebar" className="w-8 h-8" />
               ) : (
-                <Logo variant="light" />
+                <Logo variant="dark" context="sidebar" />
               )}
             </Link>
             <Button
               variant="ghost"
               size="icon"
-              className="hidden lg:flex text-sidebar-foreground hover:bg-sidebar-accent"
+              className="hidden lg:flex text-muted-foreground hover:bg-muted"
               onClick={() => setCollapsed(!collapsed)}
             >
               <ChevronLeft className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")} />

@@ -6,8 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { FileText, Upload, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
+import { FileText, Upload, Loader2, CheckCircle2, AlertCircle, FileDown } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { generateBillPDF } from "@/lib/utils/generate-bill-pdf"
 
 interface ExtractedData {
   keyValuePairs: Record<string, string>
@@ -75,6 +76,28 @@ export default function TextractTestPage() {
       setError(err.message || 'An error occurred while analyzing the document')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleCreatePDF = () => {
+    if (!extractedData) return
+    try {
+      const blob = generateBillPDF(
+        {
+          keyValuePairs: extractedData.keyValuePairs,
+          tables: extractedData.tables,
+        },
+        "bill.pdf"
+      )
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `coast-metering-bill-${new Date().toISOString().slice(0, 10)}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error(err)
+      setError("Failed to generate PDF. Make sure there is extracted data.")
     }
   }
 
@@ -181,8 +204,18 @@ export default function TextractTestPage() {
               {/* Extracted Data Display */}
               {extractedData && (
                 <div className="space-y-6 pt-4 border-t border-border">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <h3 className="text-lg font-semibold">Extracted Data</h3>
+                    <Button
+                      onClick={handleCreatePDF}
+                      variant="default"
+                      className="w-full sm:w-auto"
+                    >
+                      <FileDown className="h-4 w-4 mr-2" />
+                      Create PDF Bill
+                    </Button>
+                  </div>
                   <div>
-                    <h3 className="text-lg font-semibold mb-4">Extracted Data</h3>
                     
                     {/* Key-Value Pairs */}
                     {Object.keys(extractedData.keyValuePairs).length > 0 && (

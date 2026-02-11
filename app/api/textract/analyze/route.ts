@@ -126,33 +126,19 @@ function processTextractResponse(blocks: any[]) {
   }
 
   // Extract key-value pairs (FORMS)
-  const keyValueMap = new Map()
+  // KEY blocks have a Relationship Type "VALUE" whose Ids point to VALUE blocks.
   blocks.forEach(block => {
-    if (block.BlockType === 'KEY_VALUE_SET') {
-      if (block.EntityTypes?.includes('KEY')) {
-        keyValueMap.set(block.Id, { key: block, value: null })
-      } else if (block.EntityTypes?.includes('VALUE')) {
-        // Find the corresponding key
-        const relationships = block.Relationships || []
-        relationships.forEach((rel: any) => {
-          if (rel.Type === 'VALUE') {
-            rel.Ids.forEach((id: string) => {
-              if (keyValueMap.has(id)) {
-                keyValueMap.get(id).value = block
-              }
-            })
-          }
-        })
-      }
-    }
-  })
-
-  // Extract text from key-value pairs
-  keyValueMap.forEach(({ key, value }) => {
-    const keyText = getTextFromBlock(key, blocks)
-    const valueText = value ? getTextFromBlock(value, blocks) : ''
-    if (keyText) {
-      result.keyValuePairs[keyText] = valueText
+    if (block.BlockType === 'KEY_VALUE_SET' && block.EntityTypes?.includes('KEY')) {
+      const keyText = getTextFromBlock(block, blocks)
+      if (!keyText) return
+      const valueRel = (block.Relationships || []).find((r: any) => r.Type === 'VALUE')
+      const valueIds = valueRel?.Ids || []
+      const valueTexts = valueIds
+        .map((id: string) => blocks.find((b: any) => b.Id === id))
+        .filter(Boolean)
+        .map((valueBlock: any) => getTextFromBlock(valueBlock, blocks))
+        .filter(Boolean)
+      result.keyValuePairs[keyText] = valueTexts.join(' ').trim() || ''
     }
   })
 

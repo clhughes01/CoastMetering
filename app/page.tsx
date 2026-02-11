@@ -104,8 +104,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex flex-col bg-muted/30">
       {/* Header */}
       <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Logo />
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+          <Logo variant="dark" context="header" />
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
             <a href="https://coastmetering.com" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">About</a>
             <a href="https://coastmetering.com/#contact" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Contact</a>
