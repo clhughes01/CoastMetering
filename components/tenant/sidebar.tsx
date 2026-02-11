@@ -19,11 +19,11 @@ import { getCurrentUser } from "@/lib/auth"
 import type { User } from "@/lib/types"
 
 const navigation = [
-  { name: "Dashboard", href: "/tenant/dashboard", icon: LayoutDashboard },
-  { name: "My Statements", href: "/tenant/statements", icon: FileText },
-  { name: "Payment History", href: "/tenant/payments", icon: CreditCard },
-  { name: "Usage History", href: "/tenant/usage", icon: BarChart3 },
-  { name: "Account Settings", href: "/tenant/settings", icon: Settings },
+  { name: "Dashboard", href: "/tenant/tenant.new/dashboard", icon: LayoutDashboard },
+  { name: "Statements", href: "/tenant/tenant.new/statements", icon: FileText },
+  { name: "Payments", href: "/tenant/tenant.new/payments", icon: CreditCard },
+  { name: "Usage", href: "/tenant/tenant.new/usage", icon: BarChart3 },
+  { name: "Settings", href: "/tenant/tenant.new/settings", icon: Settings },
 ]
 
 interface SidebarProps {

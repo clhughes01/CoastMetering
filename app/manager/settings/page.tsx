@@ -143,8 +143,8 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Dashboard" 
-        breadcrumbs={[{ label: "Edit Profile" }]} 
+        title="Settings" 
+        breadcrumbs={[{ label: "Settings" }]} 
       />
       
       <main className="flex-1 p-4 md:p-6">
@@ -181,7 +181,7 @@ export default function SettingsPage() {
                   </div>
                 )}
                 {success && (
-                  <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                  <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-md dark:bg-green-950/30 dark:border-green-800 dark:text-green-300">
                     {success}
                   </div>
                 )}
@@ -256,7 +256,7 @@ export default function SettingsPage() {
                   </div>
                 )}
                 {success && (
-                  <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                  <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-md dark:bg-green-950/30 dark:border-green-800 dark:text-green-300">
                     {success}
                   </div>
                 )}
@@ -352,7 +352,7 @@ export default function SettingsPage() {
                   </div>
                 )}
                 {success && (
-                  <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                  <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-md dark:bg-green-950/30 dark:border-green-800 dark:text-green-300">
                     {success}
                   </div>
                 )}

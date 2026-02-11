@@ -116,7 +116,7 @@ export function DataTable<T extends Record<string, unknown>>({
         )}
       </div>
 
-      {/* Table */}
+      {/* Table - always show column headers so demo viewers see what data we collect */}
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -140,17 +140,30 @@ export function DataTable<T extends Record<string, unknown>>({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {paginatedData.map((item, index) => (
-              <tr key={index} className="hover:bg-muted/20 transition-colors">
-                {columns.map((column) => (
-                  <td key={String(column.key)} className="px-4 py-3 text-sm text-foreground">
-                    {column.render
-                      ? column.render(item)
-                      : String(item[column.key as keyof T] || "")}
-                  </td>
-                ))}
+            {paginatedData.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={columns.length}
+                  className="px-4 py-8 text-center text-sm text-muted-foreground"
+                >
+                  {data.length === 0
+                    ? "No data yet. Data will appear here once added."
+                    : "No matching entries. Try adjusting your search or filters."}
+                </td>
               </tr>
-            ))}
+            ) : (
+              paginatedData.map((item, index) => (
+                <tr key={index} className="hover:bg-muted/20 transition-colors">
+                  {columns.map((column) => (
+                    <td key={String(column.key)} className="px-4 py-3 text-sm text-foreground">
+                      {column.render
+                        ? column.render(item)
+                        : String(item[column.key as keyof T] || "")}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -158,8 +171,9 @@ export function DataTable<T extends Record<string, unknown>>({
       {/* Pagination */}
       <div className="p-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <p className="text-sm text-muted-foreground">
-          Showing {startIndex + 1} to {Math.min(startIndex + Number(entriesPerPage), sortedData.length)} of{" "}
-          {sortedData.length} entries
+          {sortedData.length === 0
+            ? "0 entries"
+            : `Showing ${startIndex + 1} to ${Math.min(startIndex + Number(entriesPerPage), sortedData.length)} of ${sortedData.length} entries`}
         </p>
         <div className="flex items-center gap-2">
           <Button

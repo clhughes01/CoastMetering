@@ -3,14 +3,17 @@
 import { useState, useEffect } from "react"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 import { Users, FileText, DollarSign, TrendingUp, Droplets, Building } from "lucide-react"
 import Link from "next/link"
 import { getCustomers, getStatements, getPayments } from "@/lib/data"
+import { createSupabaseClient } from "@/lib/supabase/client"
 
 export default function DashboardPage() {
   const [customers, setCustomers] = useState<any[]>([])
   const [statements, setStatements] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
+  const [propertiesCount, setPropertiesCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -28,9 +31,16 @@ export default function DashboardPage() {
       setCustomers(customersData)
       setStatements(statementsData)
       setPayments(paymentsData)
+      // Load properties count from Supabase when available
+      try {
+        const supabase = createSupabaseClient()
+        const { count } = await supabase.from("properties").select("*", { count: "exact", head: true })
+        setPropertiesCount(count ?? 0)
+      } catch {
+        setPropertiesCount(null)
+      }
     } catch (error) {
-      console.error('Error loading dashboard data:', error)
-      // Use mock data as fallback
+      console.error("Error loading dashboard data:", error)
       setCustomers([])
       setStatements([])
       setPayments([])
@@ -50,28 +60,28 @@ export default function DashboardPage() {
     {
       title: "Total Customers",
       value: customers.length.toString(),
-      change: "+12 this month",
+      change: "From your account",
       icon: Users,
       href: "/manager/customers"
     },
     {
       title: "Active Properties",
-      value: "24",
-      change: "4 new units",
+      value: propertiesCount !== null ? propertiesCount.toString() : "—",
+      change: "View properties",
       icon: Building,
-      href: "/manager/customers"
+      href: "/manager/properties"
     },
     {
       title: "Pending Statements",
       value: pendingStatements.toString(),
-      change: "Due this week",
+      change: pendingStatements > 0 ? "Due soon" : "All caught up",
       icon: FileText,
       href: "/manager/statements"
     },
     {
       title: "Monthly Revenue",
       value: `$${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-      change: "+8.2% from last month",
+      change: "From payments",
       icon: DollarSign,
       href: "/manager/payments"
     },
@@ -100,7 +110,7 @@ const recentActivity = [
 
   return (
     <div className="flex flex-col min-h-screen">
-      <Header title="Dashboard" />
+      <Header title="Dashboard" breadcrumbs={[{ label: "Dashboard" }]} />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
         {/* Stats Grid */}
@@ -116,10 +126,7 @@ const recentActivity = [
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold text-foreground">{stat.value}</div>
-                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                    <TrendingUp className="h-3 w-3 text-green-500" />
-                    {stat.change}
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">{stat.change}</p>
                 </CardContent>
               </Card>
             </Link>
@@ -194,29 +201,25 @@ const recentActivity = [
         <Card>
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
+            <p className="text-sm text-muted-foreground">Shortcuts to common tasks</p>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-3">
-              <Link href="/manager/customers">
-                <button className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors">
-                  Add New Customer
-                </button>
-              </Link>
-              <Link href="/manager/statements">
-                <button className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/80 transition-colors">
-                  Generate Statements
-                </button>
-              </Link>
-              <Link href="/manager/utility-bills">
-                <button className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/80 transition-colors">
-                  View Utility Bills
-                </button>
-              </Link>
-              <Link href="/manager/payments">
-                <button className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/80 transition-colors">
-                  Process Payments
-                </button>
-              </Link>
+              <Button asChild>
+                <Link href="/manager/customers">Add Customer</Link>
+              </Button>
+              <Button variant="secondary" asChild>
+                <Link href="/manager/statements">Statements</Link>
+              </Button>
+              <Button variant="secondary" asChild>
+                <Link href="/manager/utility-bills">Utility Bills</Link>
+              </Button>
+              <Button variant="secondary" asChild>
+                <Link href="/manager/textract-test">Extract Bill (Textract)</Link>
+              </Button>
+              <Button variant="secondary" asChild>
+                <Link href="/manager/payments">Payments</Link>
+              </Button>
             </div>
           </CardContent>
         </Card>

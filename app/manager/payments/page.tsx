@@ -49,11 +49,7 @@ const columns = [
   },
 ]
 
-const stats = [
-  { label: "Total Collected", value: "$12,450.32", icon: DollarSign, change: "+12.5%" },
-  { label: "Pending Payments", value: "$2,340.00", icon: Clock, change: "8 payments" },
-  { label: "Success Rate", value: "94.2%", icon: TrendingUp, change: "+2.1%" },
-]
+// Stats are computed from payment data in the component
 
 export default function PaymentsPage() {
   const [data, setData] = useState<Payment[]>([])
@@ -69,16 +65,34 @@ export default function PaymentsPage() {
       const paymentsData = await getPayments()
       setData(paymentsData)
     } catch (error) {
-      console.error('Error loading payments:', error)
+      console.error("Error loading payments:", error)
     } finally {
       setLoading(false)
     }
   }
 
+  const totalCollected = data
+    .filter((p) => p.status === "succeeded")
+    .reduce((sum, p) => sum + Number.parseFloat(String(p.totalAmount).replace(/[$,]/g, "") || 0), 0)
+  const pendingPayments = data.filter((p) => p.status === "PENDING" || p.status === "pending")
+  const pendingAmount = pendingPayments.reduce(
+    (sum, p) => sum + Number.parseFloat(String(p.totalAmount).replace(/[$,]/g, "") || 0),
+    0
+  )
+  const successRate = data.length > 0
+    ? Math.round((data.filter((p) => p.status === "succeeded").length / data.length) * 100)
+    : 0
+
+  const stats = [
+    { label: "Total Collected", value: `$${totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: DollarSign, change: data.filter((p) => p.status === "succeeded").length + " payments" },
+    { label: "Pending Payments", value: `$${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, icon: Clock, change: pendingPayments.length + " payments" },
+    { label: "Success Rate", value: successRate + "%", icon: TrendingUp, change: "Of all transactions" },
+  ]
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Dashboard" 
+        title="Payments" 
         breadcrumbs={[{ label: "Payments" }]} 
       />
       
@@ -92,7 +106,7 @@ export default function PaymentsPage() {
                   <div>
                     <p className="text-sm text-muted-foreground">{stat.label}</p>
                     <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-                    <p className="text-xs text-green-600">{stat.change}</p>
+                    <p className="text-xs text-muted-foreground">{stat.change}</p>
                   </div>
                   <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                     <stat.icon className="h-6 w-6 text-primary" />

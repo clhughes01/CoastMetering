@@ -1,34 +1,51 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { BarChart3, TrendingUp, Droplets, Calendar } from "lucide-react"
-import { consumptionData, customers } from "@/lib/data"
+import { getConsumptionData, getCustomers } from "@/lib/data"
+import type { ConsumptionData } from "@/lib/types"
 
-// Top consumers data - in production this would come from database query
-const topConsumers = [
-  { unit: "Unit 1160", name: "German Lopez Ramirez", consumption: "2,450 gal", cost: "$285.56" },
-  { unit: "Unit 1037", name: "Mario Domingo", consumption: "1,890 gal", cost: "$194.50" },
-  { unit: "Unit 1130", name: "Alejandro Juan Domingo", consumption: "1,540 gal", cost: "$178.43" },
-  { unit: "Unit 220", name: "Miguel Gonzales Rubio", consumption: "1,180 gal", cost: "$134.80" },
-  { unit: "Unit 214", name: "Rosalia Martinez", consumption: "820 gal", cost: "$92.09" },
+// Top consumers – from DB when we have usage per unit (meter_readings per unit)
+const topConsumersPlaceholder = [
+  { unit: "Unit 1160", name: "—", consumption: "—", cost: "—" },
+  { unit: "Unit 1037", name: "—", consumption: "—", cost: "—" },
+  { unit: "Unit 1130", name: "—", consumption: "—", cost: "—" },
 ]
 
 export default function ConsumptionPage() {
-  // TODO: Replace with server component or SWR data fetching
-  // Example: const { data: consumptionData } = useSWR('/api/consumption', fetcher)
-  const data = consumptionData
-  
-  const maxConsumption = Math.max(...data.map(d => d.consumption))
+  const [data, setData] = useState<ConsumptionData[]>([])
+  const [loading, setLoading] = useState(true)
+  const [customerCount, setCustomerCount] = useState(0)
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      try {
+        const [consumption, customers] = await Promise.all([
+          getConsumptionData(),
+          getCustomers(),
+        ])
+        setData(consumption)
+        setCustomerCount(customers.length)
+      } finally {
+        setLoading(false)
+      }
+    }
+    load()
+  }, [])
+
+  const maxConsumption = data.length ? Math.max(...data.map((d) => d.consumption)) : 1
   const totalConsumption = data.reduce((sum, d) => sum + d.consumption, 0)
-  const avgMonthly = Math.round(totalConsumption / data.length)
+  const avgMonthly = data.length ? Math.round(totalConsumption / data.length) : 0
 
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Dashboard" 
-        breadcrumbs={[{ label: "Consumption Chart" }]} 
+        title="Consumption" 
+        breadcrumbs={[{ label: "Consumption" }]} 
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -38,14 +55,14 @@ export default function ConsumptionPage() {
             <div className="flex flex-wrap items-center gap-4">
               <div>
                 <label className="text-sm font-medium text-muted-foreground mb-2 block">Year</label>
-                <Select defaultValue="2024">
+                <Select defaultValue="2025">
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="2025">2025</SelectItem>
                     <SelectItem value="2024">2024</SelectItem>
                     <SelectItem value="2023">2023</SelectItem>
-                    <SelectItem value="2022">2022</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -53,7 +70,7 @@ export default function ConsumptionPage() {
                 <label className="text-sm font-medium text-muted-foreground mb-2 block">Property</label>
                 <Select defaultValue="all">
                   <SelectTrigger className="w-48">
-                    <SelectValue />
+                    <SelectValue placeholder="All properties" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Properties</SelectItem>
@@ -76,8 +93,8 @@ export default function ConsumptionPage() {
                   <Droplets className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">{totalConsumption.toLocaleString()}</p>
-                  <p className="text-sm text-muted-foreground">Total Gallons (YTD)</p>
+                  <p className="text-2xl font-bold text-foreground">{loading ? "—" : totalConsumption.toLocaleString()}</p>
+                  <p className="text-sm text-muted-foreground">Total (from meter readings)</p>
                 </div>
               </div>
             </CardContent>
@@ -102,8 +119,8 @@ export default function ConsumptionPage() {
                   <Calendar className="h-5 w-5 text-blue-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">$89,300</p>
-                  <p className="text-sm text-muted-foreground">Total Cost (YTD)</p>
+                  <p className="text-2xl font-bold text-foreground">{loading ? "—" : "—"}</p>
+                  <p className="text-sm text-muted-foreground">Total Cost (when billing linked)</p>
                 </div>
               </div>
             </CardContent>
@@ -115,8 +132,8 @@ export default function ConsumptionPage() {
                   <BarChart3 className="h-5 w-5 text-orange-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">{customers.length}</p>
-                  <p className="text-sm text-muted-foreground">Active Meters</p>
+                  <p className="text-2xl font-bold text-foreground">{loading ? "—" : customerCount}</p>
+                  <p className="text-sm text-muted-foreground">Active Tenants</p>
                 </div>
               </div>
             </CardContent>
@@ -133,24 +150,37 @@ export default function ConsumptionPage() {
           </CardHeader>
           <CardContent>
             <div className="h-80">
-              <div className="flex items-end justify-between h-64 gap-2 px-4">
-                {data.map((item) => (
-                  <div key={item.month} className="flex flex-col items-center flex-1">
-                    <div 
-                      className="w-full bg-primary rounded-t-sm transition-all hover:bg-primary/80"
-                      style={{ height: `${(item.consumption / maxConsumption) * 100}%` }}
-                      title={`${item.consumption.toLocaleString()} gallons`}
-                    />
+              {loading ? (
+                <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>
+              ) : data.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-64 text-center px-4">
+                  <p className="font-medium text-foreground">No consumption data yet</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Add meters and ingest readings (Badger Orion or manual) to see data here.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-end justify-between h-64 gap-2 px-4">
+                    {data.map((item) => (
+                      <div key={`${item.month}-${item.year ?? ""}`} className="flex flex-col items-center flex-1">
+                        <div
+                          className="w-full bg-primary rounded-t-sm transition-all hover:bg-primary/80"
+                          style={{ height: `${(item.consumption / maxConsumption) * 100}%` }}
+                          title={`${item.consumption.toLocaleString()}`}
+                        />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <div className="flex justify-between px-4 mt-2">
-                {data.map((item) => (
-                  <span key={item.month} className="text-xs text-muted-foreground flex-1 text-center">
-                    {item.month}
-                  </span>
-                ))}
-              </div>
+                  <div className="flex justify-between px-4 mt-2">
+                    {data.map((item) => (
+                      <span key={`${item.month}-${item.year ?? ""}`} className="text-xs text-muted-foreground flex-1 text-center">
+                        {item.month}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border">
               <div className="flex items-center gap-2">
@@ -171,7 +201,7 @@ export default function ConsumptionPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {topConsumers.map((consumer, index) => (
+              {topConsumersPlaceholder.map((consumer, index) => (
                 <div key={consumer.unit} className="flex items-center justify-between py-3 border-b border-border last:border-0">
                   <div className="flex items-center gap-4">
                     <span className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-medium text-primary">

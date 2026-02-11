@@ -144,10 +144,16 @@ export async function getCustomers(): Promise<Customer[]> {
     const { data, error } = await supabase
       .from('tenants')
       .select(`
-        *,
+        id,
+        name,
+        email,
+        phone,
+        account_number,
         unit:units (
+          id,
           unit_number,
           property:properties (
+            id,
             address,
             city,
             state,
@@ -168,21 +174,78 @@ export async function getCustomers(): Promise<Customer[]> {
       id: index + 1,
       accountNumber: tenant.account_number || `100${index + 1}`,
       residentName: tenant.name,
-      unit: `Unit ${tenant.unit?.unit_number || 'N/A'}`,
-      streetAddress: tenant.unit?.property?.address || 'N/A',
-      city: tenant.unit?.property?.city 
+      unit: `Unit ${tenant.unit?.unit_number ?? 'N/A'}`,
+      streetAddress: tenant.unit?.property?.address ?? 'N/A',
+      city: tenant.unit?.property?.city
         ? `${tenant.unit.property.city}, ${tenant.unit.property.state}`
         : 'N/A',
-      zipCode: tenant.unit?.property?.zip_code || 'N/A',
-      email: tenant.email || '',
-      phone: tenant.phone || '',
-      landlordName: tenant.unit?.property?.owner_name || 'N/A',
+      zipCode: tenant.unit?.property?.zip_code ?? 'N/A',
+      email: tenant.email ?? '',
+      phone: tenant.phone ?? '',
+      landlordName: tenant.unit?.property?.owner_name ?? 'N/A',
       propertyId: tenant.unit?.property?.id,
       userId: tenant.id,
+      tenantId: tenant.id,
+      unitId: tenant.unit?.id,
     }))
   } catch (error) {
     console.error('Error in getCustomers:', error)
     return customers
+  }
+}
+
+/**
+ * Units that have no current tenant (so manager can add one from Customers page).
+ * Returns Customer-shaped rows with unitId/unit/property info; tenantId/residentName etc. empty.
+ */
+export async function getUnitsWithoutTenant(): Promise<Customer[]> {
+  try {
+    const supabase = createSupabaseServerClient()
+    const { data: occupiedUnitIds } = await supabase
+      .from('tenants')
+      .select('unit_id')
+      .is('move_out_date', null)
+    const occupied = new Set((occupiedUnitIds ?? []).map((r: any) => r.unit_id))
+
+    const { data: units, error } = await supabase
+      .from('units')
+      .select(`
+        id,
+        unit_number,
+        property:properties (
+          id,
+          address,
+          city,
+          state,
+          zip_code,
+          owner_name
+        )
+      `)
+      .order('unit_number', { ascending: true })
+
+    if (error || !units?.length) return []
+
+    return units
+      .filter((u: any) => !occupied.has(u.id))
+      .map((u: any, index: number) => ({
+        id: 90000 + index,
+        accountNumber: '—',
+        residentName: '—',
+        unit: `Unit ${u.unit_number ?? 'N/A'}`,
+        streetAddress: u.property?.address ?? 'N/A',
+        city: u.property?.city ? `${u.property.city}, ${u.property.state}` : 'N/A',
+        zipCode: u.property?.zip_code ?? 'N/A',
+        email: '',
+        phone: '',
+        landlordName: u.property?.owner_name ?? 'N/A',
+        propertyId: u.property?.id,
+        userId: undefined,
+        tenantId: undefined,
+        unitId: u.id,
+      }))
+  } catch (err) {
+    console.error('Error in getUnitsWithoutTenant:', err)
+    return []
   }
 }
 
@@ -327,9 +390,47 @@ export async function getUtilityBills(): Promise<UtilityBill[]> {
   }
 }
 
+const MONTH_ABBREV = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * Consumption from meter_readings (aggregated by month).
+ * Returns real data when meters/readings exist; empty array otherwise.
+ * Used by Consumption page so the chart is ready when real data flows.
+ */
 export async function getConsumptionData(): Promise<ConsumptionData[]> {
-  // TODO: Replace with database query
-  return consumptionData
+  try {
+    const supabase = createSupabaseServerClient()
+    const { data: readings, error } = await supabase
+      .from('meter_readings')
+      .select('reading_value, reading_date')
+      .order('reading_date', { ascending: true })
+
+    if (error || !readings?.length) {
+      return []
+    }
+
+    const byMonth: Record<string, number> = {}
+    for (const r of readings) {
+      const d = new Date(r.reading_date)
+      const key = `${d.getFullYear()}-${d.getMonth()}`
+      const val = Number(r.reading_value) || 0
+      byMonth[key] = (byMonth[key] ?? 0) + val
+    }
+
+    return Object.entries(byMonth)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, consumption]) => {
+        const [y, m] = key.split('-').map(Number)
+        return {
+          month: MONTH_ABBREV[m] ?? '',
+          consumption: Math.round(consumption),
+          year: y,
+        }
+      })
+  } catch (err) {
+    console.error('Error in getConsumptionData:', err)
+    return []
+  }
 }
 
 export async function getUserByEmail(email: string): Promise<User | undefined> {

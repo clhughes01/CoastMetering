@@ -58,6 +58,10 @@ export interface Customer {
   landlordName: string
   propertyId?: string
   userId?: string
+  /** Tenant UUID from DB (for move-out / change tenant) */
+  tenantId?: string
+  /** Unit UUID from DB (for change tenant / add new tenant to same unit) */
+  unitId?: string
   createdAt?: Date
   updatedAt?: Date
 }

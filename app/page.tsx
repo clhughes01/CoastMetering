@@ -125,9 +125,12 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <Card className="border-border shadow-sm">
+          <Card className="border-border shadow-lg shadow-black/5">
             <CardHeader className="pb-4">
-              <CardTitle className="text-lg">Welcome</CardTitle>
+              <CardTitle className="text-lg">Sign in or create an account</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Access your Coast Metering portal
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -144,7 +147,7 @@ export default function LoginPage() {
                     </div>
                   )}
                   {success && (
-                    <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                    <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 dark:bg-green-950/30 dark:border-green-800 dark:text-green-300 rounded-md">
                       {success}
                     </div>
                   )}
@@ -217,7 +220,7 @@ export default function LoginPage() {
                     </div>
                   )}
                   {success && (
-                    <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-md">
+                    <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 dark:bg-green-950/30 dark:border-green-800 dark:text-green-300 rounded-md">
                       {success}
                     </div>
                   )}

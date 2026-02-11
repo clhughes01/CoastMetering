@@ -27,7 +27,6 @@ export function TenantHeader({ title }: HeaderProps) {
   useEffect(() => {
     async function loadUser() {
       const currentUser = await getCurrentUser()
-      console.log('Tenant header - Current user:', currentUser)
       setUser(currentUser)
       setLoading(false)
     }

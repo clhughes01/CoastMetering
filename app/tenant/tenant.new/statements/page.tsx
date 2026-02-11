@@ -32,9 +32,9 @@ const statements: Statement[] = [
 const getStatusBadge = (status: Statement["status"]) => {
   switch (status) {
     case "paid":
-      return <Badge className="bg-green-500 hover:bg-green-600 text-white">Paid</Badge>
+      return <Badge className="bg-primary text-primary-foreground">Paid</Badge>
     case "pending":
-      return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200">Pending</Badge>
+      return <Badge variant="secondary">Pending</Badge>
     case "overdue":
       return <Badge variant="destructive">Overdue</Badge>
     default:
@@ -45,7 +45,7 @@ const getStatusBadge = (status: Statement["status"]) => {
 export default function TenantStatements() {
   return (
     <div className="flex flex-col min-h-screen">
-      <TenantHeader title="My Statements" />
+      <TenantHeader title="Statements" />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
         {/* Current Balance Card */}

@@ -72,8 +72,8 @@ export default function StatementsPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Dashboard" 
-        breadcrumbs={[{ label: "Customer Statements" }]} 
+        title="Statements" 
+        breadcrumbs={[{ label: "Statements" }]} 
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -82,7 +82,7 @@ export default function StatementsPage() {
           <CardContent className="p-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
-                <label className="text-sm font-medium text-muted-foreground mb-2 block">Select Months :</label>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Month</label>
                 <Select defaultValue="all">
                   <SelectTrigger>
                     <SelectValue placeholder="Select Months" />
@@ -96,7 +96,7 @@ export default function StatementsPage() {
                 </Select>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground mb-2 block">Select Years :</label>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">Year</label>
                 <Select defaultValue="2025">
                   <SelectTrigger>
                     <SelectValue placeholder="Select Years" />

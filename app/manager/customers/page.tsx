@@ -6,24 +6,42 @@ import { DataTable } from "@/components/manager/data-table"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Download, Plus, Users } from "lucide-react"
+import { Download, Plus, Users, UserRoundCog } from "lucide-react"
 import { getCustomers } from "@/lib/data"
 import type { Customer } from "@/lib/types"
-import { CreatePropertyModal, CreateUnitModal, CreateTenantModal, CreateMeterModal, EditTenantModal } from "@/components/admin"
+import { CreatePropertyModal, CreateUnitModal, CreateTenantModal, CreateMeterModal, EditTenantModal, ChangeTenantModal } from "@/components/admin"
 
-// Column definitions - these stay the same regardless of data source
-const columns = [
-  { key: "id", header: "ID" },
-  { key: "accountNumber", header: "Account Number" },
-  { key: "residentName", header: "Resident Name" },
-  { key: "unit", header: "Unit" },
-  { key: "streetAddress", header: "Street Address" },
-  { key: "city", header: "City" },
-  { key: "zipCode", header: "Zip Code" },
-  { key: "email", header: "Email" },
-  { key: "phone", header: "Phone" },
-  { key: "landlordName", header: "Landlord Name" },
-]
+function getColumns(onChangeTenant: (customer: Customer) => void) {
+  return [
+    { key: "id", header: "ID" },
+    { key: "accountNumber", header: "Account Number" },
+    { key: "residentName", header: "Resident Name" },
+    { key: "unit", header: "Unit" },
+    { key: "streetAddress", header: "Street Address" },
+    { key: "city", header: "City" },
+    { key: "zipCode", header: "Zip Code" },
+    { key: "email", header: "Email" },
+    { key: "phone", header: "Phone" },
+    { key: "landlordName", header: "Landlord Name" },
+    {
+      key: "actions",
+      header: "Actions",
+      sortable: false,
+      render: (item: Customer) => (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onChangeTenant(item)}
+          disabled={!item.unitId}
+          title={item.unitId ? "Replace with a new tenant for this unit" : "Unit not linked"}
+        >
+          <UserRoundCog className="h-4 w-4 mr-1" />
+          Change tenant
+        </Button>
+      ),
+    },
+  ]
+}
 
 export default function CustomersPage() {
   const [data, setData] = useState<Customer[]>([])
@@ -32,9 +50,16 @@ export default function CustomersPage() {
   const [isCreateTenantModalOpen, setIsCreateTenantModalOpen] = useState(false)
   const [isCreateMeterModalOpen, setIsCreateMeterModalOpen] = useState(false)
   const [isEditTenantModalOpen, setIsEditTenantModalOpen] = useState(false)
+  const [isChangeTenantModalOpen, setIsChangeTenantModalOpen] = useState(false)
+  const [customerForChange, setCustomerForChange] = useState<Customer | null>(null)
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null)
   const [selectedUnit, setSelectedUnit] = useState<{ id: string; number: string } | null>(null)
   const [selectedTenant, setSelectedTenant] = useState<any>(null)
+
+  const openChangeTenant = (customer: Customer) => {
+    setCustomerForChange(customer)
+    setIsChangeTenantModalOpen(true)
+  }
 
   useEffect(() => {
     loadCustomers()
@@ -46,7 +71,7 @@ export default function CustomersPage() {
       const customers = await getCustomers()
       setData(customers)
     } catch (error) {
-      console.error('Error loading customers:', error)
+      console.error("Error loading customers:", error)
     } finally {
       setLoading(false)
     }
@@ -55,11 +80,8 @@ export default function CustomersPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Dashboard" 
-        breadcrumbs={[
-          { label: "Create Customer", href: "#" },
-          { label: "Manage Customer" }
-        ]} 
+        title="Customers" 
+        breadcrumbs={[{ label: "Customers" }]} 
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -70,7 +92,7 @@ export default function CustomersPage() {
               <div className="flex items-center gap-4">
                 <Select defaultValue="all">
                   <SelectTrigger className="w-48">
-                    <SelectValue placeholder="Select Months" />
+                    <SelectValue placeholder="Filter by month" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Months</SelectItem>
@@ -108,7 +130,7 @@ export default function CustomersPage() {
           <CardContent className="p-0">
             <DataTable
               data={data}
-              columns={columns}
+              columns={getColumns(openChangeTenant)}
               showPrint={true}
             />
           </CardContent>
@@ -173,6 +195,24 @@ export default function CustomersPage() {
           }}
           tenant={selectedTenant}
         />
+        {customerForChange?.unitId && (
+          <ChangeTenantModal
+            isOpen={isChangeTenantModalOpen}
+            onClose={() => {
+              setIsChangeTenantModalOpen(false)
+              setCustomerForChange(null)
+            }}
+            onSuccess={() => {
+              loadCustomers()
+              setIsChangeTenantModalOpen(false)
+              setCustomerForChange(null)
+            }}
+            unitId={customerForChange.unitId}
+            unitNumber={customerForChange.unit}
+            currentTenantId={customerForChange.tenantId ?? null}
+            currentTenantName={customerForChange.residentName ?? null}
+          />
+        )}
       </main>
     </div>
   )

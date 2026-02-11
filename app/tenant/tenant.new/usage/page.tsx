@@ -34,7 +34,7 @@ export default function TenantUsage() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <TenantHeader title="Usage History" />
+      <TenantHeader title="Usage" />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
         {/* Stats Overview */}

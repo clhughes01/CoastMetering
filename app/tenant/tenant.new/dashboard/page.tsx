@@ -118,7 +118,7 @@ export default function TenantDashboard() {
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Link href="/tenant/statements" className="block">
+              <Link href="/tenant/tenant.new/statements" className="block">
                 <Button variant="outline" className="w-full justify-between h-12 bg-transparent">
                   <span className="flex items-center gap-2">
                     <FileText className="h-4 w-4" />
@@ -134,7 +134,7 @@ export default function TenantDashboard() {
                 </span>
                 <ArrowRight className="h-4 w-4" />
               </Button>
-              <Link href="/tenant/usage" className="block">
+              <Link href="/tenant/tenant.new/usage" className="block">
                 <Button variant="outline" className="w-full justify-between h-12 bg-transparent">
                   <span className="flex items-center gap-2">
                     <Droplets className="h-4 w-4" />
@@ -150,8 +150,8 @@ export default function TenantDashboard() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Recent Statements</CardTitle>
-              <Link href="/tenant/statements" className="text-sm text-primary hover:underline">
-                View All
+              <Link href="/tenant/tenant.new/statements" className="text-sm text-primary hover:underline">
+                View all
               </Link>
             </CardHeader>
             <CardContent>
@@ -164,10 +164,10 @@ export default function TenantDashboard() {
                     </div>
                     <div className="text-right">
                       <p className="font-semibold text-foreground">{statement.amount}</p>
-                      <span className={`text-xs px-2 py-1 rounded-full ${
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                         statement.status === "paid" 
-                          ? "bg-green-100 text-green-700" 
-                          : "bg-yellow-100 text-yellow-700"
+                          ? "bg-primary/10 text-primary" 
+                          : "bg-muted text-muted-foreground"
                       }`}>
                         {statement.status === "paid" ? "Paid" : "Pending"}
                       </span>

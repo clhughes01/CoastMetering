@@ -92,8 +92,8 @@ export default function UtilityBillsPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Dashboard" 
-        breadcrumbs={[{ label: "Utility Statements" }]} 
+        title="Utility Bills" 
+        breadcrumbs={[{ label: "Utility Bills" }]} 
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">

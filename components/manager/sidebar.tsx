@@ -28,36 +28,36 @@ const navigation = [
     ]
   },
   {
-    title: "MANAGE CUSTOMERS",
+    title: "MANAGE",
     items: [
       { name: "Properties", href: "/manager/properties", icon: Building2 },
-      { name: "Manage Customers", href: "/manager/customers", icon: Users },
+      { name: "Customers", href: "/manager/customers", icon: Users },
     ]
   },
   {
-    title: "CUSTOMER STATEMENTS",
+    title: "STATEMENTS & USAGE",
     items: [
-      { name: "Customer Statements", href: "/manager/statements", icon: FileText },
-      { name: "Consumption Chart", href: "/manager/consumption", icon: BarChart3 },
+      { name: "Statements", href: "/manager/statements", icon: FileText },
+      { name: "Consumption", href: "/manager/consumption", icon: BarChart3 },
     ]
   },
   {
-    title: "MONTHLY UTILITY BILLS",
+    title: "UTILITY BILLS",
     items: [
-      { name: "Utility Statements", href: "/manager/utility-bills", icon: Receipt },
-      { name: "Textract Test", href: "/manager/textract-test", icon: Scan },
+      { name: "Utility Bills", href: "/manager/utility-bills", icon: Receipt },
+      { name: "Extract Bill (Textract)", href: "/manager/textract-test", icon: Scan },
     ]
   },
   {
     title: "PAYMENTS",
     items: [
-      { name: "Payments and Payouts", href: "/manager/payments", icon: CreditCard },
+      { name: "Payments", href: "/manager/payments", icon: CreditCard },
     ]
   },
   {
     title: "SETTINGS",
     items: [
-      { name: "Edit Profile", href: "/manager/settings", icon: Settings },
+      { name: "Settings", href: "/manager/settings", icon: Settings },
     ]
   },
 ]

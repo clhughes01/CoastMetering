@@ -142,11 +142,6 @@ export default function PropertiesPage() {
               <div className="p-8 text-center text-muted-foreground">
                 Loading properties...
               </div>
-            ) : properties.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground">
-                <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>No properties found. Create your first property to get started.</p>
-              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -161,42 +156,51 @@ export default function PropertiesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {formattedData.map((property) => (
-                      <tr key={property.id} className="border-b border-border hover:bg-muted/30">
-                        {columns.map((col) => (
-                          <td key={col.key} className="px-4 py-3 text-sm text-foreground">
-                            {property[col.key as keyof typeof property] || 'N/A'}
-                          </td>
-                        ))}
-                        <td className="px-4 py-3">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={async () => {
-                              // Fetch full property data with all fields
-                              try {
-                                const supabase = createSupabaseClient()
-                                const { data: fullProperty, error } = await supabase
-                                  .from('properties')
-                                  .select('*')
-                                  .eq('id', property.id)
-                                  .single()
-                                
-                                if (!error && fullProperty) {
-                                  setSelectedProperty(fullProperty)
-                                  setIsEditPropertyModalOpen(true)
-                                }
-                              } catch (err) {
-                                console.error('Error loading property:', err)
-                              }
-                            }}
-                          >
-                            <Pencil className="h-4 w-4 mr-1" />
-                            Edit
-                          </Button>
+                    {formattedData.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={columns.length + 1}
+                          className="px-4 py-8 text-center text-sm text-muted-foreground"
+                        >
+                          No properties yet. Add your first property to see data here.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      formattedData.map((property) => (
+                        <tr key={property.id} className="border-b border-border hover:bg-muted/30">
+                          {columns.map((col) => (
+                            <td key={col.key} className="px-4 py-3 text-sm text-foreground">
+                              {property[col.key as keyof typeof property] || "N/A"}
+                            </td>
+                          ))}
+                          <td className="px-4 py-3">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  const supabase = createSupabaseClient()
+                                  const { data: fullProperty, error } = await supabase
+                                    .from("properties")
+                                    .select("*")
+                                    .eq("id", property.id)
+                                    .single()
+                                  if (!error && fullProperty) {
+                                    setSelectedProperty(fullProperty)
+                                    setIsEditPropertyModalOpen(true)
+                                  }
+                                } catch (err) {
+                                  console.error("Error loading property:", err)
+                                }
+                              }}
+                            >
+                              <Pencil className="h-4 w-4 mr-1" />
+                              Edit
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
