@@ -71,14 +71,14 @@ export default function PaymentsPage() {
     }
   }
 
+  const parseAmount = (totalAmount: Payment["totalAmount"]) =>
+    Number.parseFloat(String(totalAmount).replace(/[$,]/g, "") || "0")
+
   const totalCollected = data
     .filter((p) => p.status === "succeeded")
-    .reduce((sum, p) => sum + Number.parseFloat(String(p.totalAmount).replace(/[$,]/g, "") || 0), 0)
-  const pendingPayments = data.filter((p) => p.status === "PENDING" || p.status === "pending")
-  const pendingAmount = pendingPayments.reduce(
-    (sum, p) => sum + Number.parseFloat(String(p.totalAmount).replace(/[$,]/g, "") || 0),
-    0
-  )
+    .reduce((sum, p) => sum + parseAmount(p.totalAmount), 0)
+  const pendingPayments = data.filter((p) => p.status === "PENDING")
+  const pendingAmount = pendingPayments.reduce((sum, p) => sum + parseAmount(p.totalAmount), 0)
   const successRate = data.length > 0
     ? Math.round((data.filter((p) => p.status === "succeeded").length / data.length) * 100)
     : 0

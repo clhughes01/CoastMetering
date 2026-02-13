@@ -24,7 +24,7 @@ interface DataTableProps<T> {
   showPrint?: boolean
 }
 
-export function DataTable<T extends Record<string, unknown>>({
+export function DataTable<T extends object>({
   data,
   columns,
   title,
@@ -38,9 +38,11 @@ export function DataTable<T extends Record<string, unknown>>({
   const [sortColumn, setSortColumn] = useState<string | null>(null)
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
+  const getRecord = (item: T): Record<string, unknown> => item as Record<string, unknown>
+
   // Filter data based on search
   const filteredData = data.filter((item) =>
-    Object.values(item).some((value) =>
+    Object.values(getRecord(item)).some((value) =>
       String(value).toLowerCase().includes(search.toLowerCase())
     )
   )
@@ -48,8 +50,8 @@ export function DataTable<T extends Record<string, unknown>>({
   // Sort data
   const sortedData = [...filteredData].sort((a, b) => {
     if (!sortColumn) return 0
-    const aVal = String(a[sortColumn] || "")
-    const bVal = String(b[sortColumn] || "")
+    const aVal = String(getRecord(a)[sortColumn] ?? "")
+    const bVal = String(getRecord(b)[sortColumn] ?? "")
     return sortDirection === "asc" ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
   })
 
@@ -158,7 +160,7 @@ export function DataTable<T extends Record<string, unknown>>({
                     <td key={String(column.key)} className="px-4 py-3 text-sm text-foreground">
                       {column.render
                         ? column.render(item)
-                        : String(item[column.key as keyof T] || "")}
+                        : String(getRecord(item)[String(column.key)] ?? "")}
                     </td>
                   ))}
                 </tr>

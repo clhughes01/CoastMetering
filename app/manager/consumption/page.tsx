@@ -1,12 +1,22 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { BarChart3, TrendingUp, Droplets, Calendar } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { BarChart3, TrendingUp, Droplets, Calendar, Search } from "lucide-react"
 import { getConsumptionData, getCustomers } from "@/lib/data"
 import type { ConsumptionData } from "@/lib/types"
+
+interface PropertyOption {
+  id: string
+  address: string
+  city: string
+  state: string
+  zip_code: string
+  label: string
+}
 
 // Top consumers – from DB when we have usage per unit (meter_readings per unit)
 const topConsumersPlaceholder = [
@@ -19,6 +29,41 @@ export default function ConsumptionPage() {
   const [data, setData] = useState<ConsumptionData[]>([])
   const [loading, setLoading] = useState(true)
   const [customerCount, setCustomerCount] = useState(0)
+  const [properties, setProperties] = useState<PropertyOption[]>([])
+  const [propertySearch, setPropertySearch] = useState("")
+  const [selectedProperty, setSelectedProperty] = useState<PropertyOption | null>(null)
+  const [propertyDropdownOpen, setPropertyDropdownOpen] = useState(false)
+  const propertySearchRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    async function loadProperties() {
+      try {
+        const res = await fetch("/api/properties/list")
+        const json = await res.json()
+        if (json.success && Array.isArray(json.data)) {
+          setProperties(
+            json.data.map((p: { id: string; address: string; city: string; state: string; zip_code: string }) => ({
+              ...p,
+              label: `${p.address}, ${p.city}, ${p.state} ${p.zip_code}`,
+            }))
+          )
+        }
+      } catch (err) {
+        console.error("Error loading properties:", err)
+      }
+    }
+    loadProperties()
+  }, [])
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (propertySearchRef.current && !propertySearchRef.current.contains(event.target as Node)) {
+        setPropertyDropdownOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -36,6 +81,19 @@ export default function ConsumptionPage() {
     }
     load()
   }, [])
+
+  const propertySearchLower = propertySearch.trim().toLowerCase()
+  const matchingProperties = propertySearchLower
+    ? properties.filter(
+        (p) =>
+          p.address.toLowerCase().includes(propertySearchLower) ||
+          p.city.toLowerCase().includes(propertySearchLower) ||
+          p.state.toLowerCase().includes(propertySearchLower) ||
+          p.zip_code.toLowerCase().includes(propertySearchLower) ||
+          p.label.toLowerCase().includes(propertySearchLower)
+      )
+    : properties
+  const showDropdown = propertyDropdownOpen && (propertySearch.length > 0 || matchingProperties.length > 0)
 
   const maxConsumption = data.length ? Math.max(...data.map((d) => d.consumption)) : 1
   const totalConsumption = data.reduce((sum, d) => sum + d.consumption, 0)
@@ -66,19 +124,59 @@ export default function ConsumptionPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              <div className="relative w-64" ref={propertySearchRef}>
                 <label className="text-sm font-medium text-muted-foreground mb-2 block">Property</label>
-                <Select defaultValue="all">
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="All properties" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Properties</SelectItem>
-                    <SelectItem value="beech">214 South Beech Street</SelectItem>
-                    <SelectItem value="grand">1160 East Grand Avenue</SelectItem>
-                    <SelectItem value="amherst">6836 Amherst Street</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    type="text"
+                    placeholder="Search properties..."
+                    value={propertySearch || (selectedProperty ? selectedProperty.label : "")}
+                    onChange={(e) => {
+                      setPropertySearch(e.target.value)
+                      setSelectedProperty(null)
+                      setPropertyDropdownOpen(true)
+                    }}
+                    onFocus={() => setPropertyDropdownOpen(true)}
+                    className="pl-9"
+                  />
+                </div>
+                {showDropdown && (
+                  <ul className="absolute z-50 mt-1 w-full rounded-md border border-border bg-card py-1 shadow-lg max-h-60 overflow-auto">
+                    <li>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-muted focus:bg-muted focus:outline-none"
+                        onClick={() => {
+                          setSelectedProperty(null)
+                          setPropertySearch("")
+                          setPropertyDropdownOpen(false)
+                        }}
+                      >
+                        All properties
+                      </button>
+                    </li>
+                    {matchingProperties.length === 0 ? (
+                      <li className="px-3 py-2 text-sm text-muted-foreground">No matching properties</li>
+                    ) : (
+                      matchingProperties.map((p) => (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-muted focus:bg-muted focus:outline-none"
+                            onClick={() => {
+                              setSelectedProperty(p)
+                              setPropertySearch("")
+                              setPropertyDropdownOpen(false)
+                            }}
+                          >
+                            {p.label}
+                          </button>
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                )}
               </div>
             </div>
           </CardContent>
