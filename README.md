@@ -59,7 +59,7 @@ npm install
    - You'll see:
      - **Project URL** - This is your `NEXT_PUBLIC_SUPABASE_URL`
      - **anon/public key** - This is your `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-     - **service_role key** - This is your `SUPABASE_SERVICE_ROLE_KEY` (⚠️ Keep this secret!)
+     - **service_role key** - This is your `SUPABASE_SERVICE_ROLE_KEY`
 
    **Add the credentials to your `.env` file:**
    ```
