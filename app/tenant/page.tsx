@@ -1,14 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createSupabaseClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 
 export default function TenantPortal() {
   const [tenant, setTenant] = useState<any>(null)
   const [readings, setReadings] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const supabase = createSupabaseClient()
 
   useEffect(() => {
     // TODO: Get tenant from authenticated user
