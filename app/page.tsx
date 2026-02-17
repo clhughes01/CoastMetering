@@ -121,7 +121,7 @@ export default function LoginPage() {
               Welcome Back
             </h1>
             <p className="text-muted-foreground">
-              Sign in to access your water utility portal
+              Sign in to access your utility portal
             </p>
           </div>
 
