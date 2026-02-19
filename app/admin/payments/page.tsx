@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Header } from "@/components/manager/header"
 import { DataTable } from "@/components/manager/data-table"
 import { Button } from "@/components/ui/button"
@@ -8,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CreditCard, ExternalLink, DollarSign, TrendingUp, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { getPayments } from "@/lib/data"
+import { getPayments, getCustomers } from "@/lib/data"
+import { createSupabaseClient } from "@/lib/supabase/client"
 import type { Payment } from "@/lib/types"
 
 const BASE = "/admin"
@@ -70,7 +72,13 @@ const columns = [
 ]
 
 export default function AdminPaymentsPage() {
+  const searchParams = useSearchParams()
+  const managerId = searchParams.get("manager") || undefined
+  const propertyId = searchParams.get("property") || undefined
+
   const [data, setData] = useState<Payment[]>([])
+  const [customers, setCustomers] = useState<Array<{ accountNumber: string; propertyId?: string }>>([])
+  const [properties, setProperties] = useState<Array<{ id: string; manager_id: string | null }>>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -80,14 +88,42 @@ export default function AdminPaymentsPage() {
   const loadPayments = async () => {
     try {
       setLoading(true)
-      const paymentsData = await getPayments()
+      const supabase = createSupabaseClient()
+      const [paymentsData, customersData, propsRes] = await Promise.all([
+        getPayments(),
+        getCustomers(),
+        supabase.from("properties").select("id, manager_id"),
+      ])
       setData(paymentsData)
+      setCustomers(customersData.map((c: any) => ({ accountNumber: c.accountNumber, propertyId: c.propertyId })))
+      setProperties(propsRes.data || [])
     } catch (error) {
       console.error("Error loading payments:", error)
     } finally {
       setLoading(false)
     }
   }
+
+  const filteredPropertyIds = useMemo(() => {
+    let ids = new Set(properties.map((p) => p.id))
+    if (managerId) ids = new Set(properties.filter((p) => p.manager_id === managerId).map((p) => p.id))
+    if (propertyId) ids = ids.has(propertyId) ? new Set([propertyId]) : new Set()
+    return ids
+  }, [properties, managerId, propertyId])
+
+  const accountNumbersInScope = useMemo(() => {
+    if (!managerId && !propertyId) return null
+    if (filteredPropertyIds.size === 0) return new Set<string>()
+    return new Set(
+      customers.filter((c) => c.propertyId && filteredPropertyIds.has(c.propertyId)).map((c) => c.accountNumber)
+    )
+  }, [customers, filteredPropertyIds, managerId, propertyId])
+
+  const filteredData = useMemo(() => {
+    if (accountNumbersInScope === null) return data
+    if (accountNumbersInScope.size === 0) return []
+    return data.filter((p) => accountNumbersInScope.has(p.accountNumber))
+  }, [data, accountNumbersInScope])
 
   const parseAmount = (totalAmount: Payment["totalAmount"]) =>
     Number.parseFloat(String(totalAmount).replace(/[$,]/g, "") || "0")
@@ -113,7 +149,7 @@ export default function AdminPaymentsPage() {
       label: "Total Collected",
       value: `$${totalCollected.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
       icon: DollarSign,
-      change: data.filter((p) => p.status === "succeeded").length + " payments",
+      change: filteredData.filter((p) => p.status === "succeeded").length + " payments",
     },
     {
       label: "Pending Payments",
@@ -181,7 +217,7 @@ export default function AdminPaymentsPage() {
 
               <TabsContent value="history" className="mt-0">
                 <DataTable
-                  data={data}
+                  data={filteredData}
                   columns={columns}
                   title="Payment History"
                   showPrint={true}

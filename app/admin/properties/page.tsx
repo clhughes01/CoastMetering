@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Header } from "@/components/manager/header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -17,11 +18,16 @@ interface Property {
   state: string
   zip_code: string
   owner_name: string | null
+  manager_id?: string | null
   units_count?: number
   tenants_count?: number
 }
 
 export default function AdminPropertiesPage() {
+  const searchParams = useSearchParams()
+  const managerId = searchParams.get("manager") || undefined
+  const propertyId = searchParams.get("property") || undefined
+
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
   const [isCreatePropertyModalOpen, setIsCreatePropertyModalOpen] = useState(false)
@@ -64,6 +70,7 @@ export default function AdminPropertiesPage() {
         state: property.state,
         zip_code: property.zip_code,
         owner_name: property.owner_name,
+        manager_id: property.manager_id,
         water_utility: property.water_utility,
         power_utility: property.power_utility,
         gas_utility: property.gas_utility,
@@ -94,7 +101,14 @@ export default function AdminPropertiesPage() {
     { key: "tenants_count", header: "Active Tenants" },
   ]
 
-  const formattedData = properties.map((property) => ({
+  const filteredProperties = useMemo(() => {
+    let list = properties
+    if (managerId) list = list.filter((p) => p.manager_id === managerId)
+    if (propertyId) list = list.filter((p) => p.id === propertyId)
+    return list
+  }, [properties, managerId, propertyId])
+
+  const formattedData = filteredProperties.map((property) => ({
     ...property,
     address: property.address,
     city: `${property.city}, ${property.state}`,

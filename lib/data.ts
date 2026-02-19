@@ -269,6 +269,7 @@ export async function getStatements(): Promise<Statement[]> {
         unit:units (
           unit_number,
           property:properties (
+            id,
             address,
             city,
             state,
@@ -315,6 +316,7 @@ export async function getStatements(): Promise<Statement[]> {
         landlordName: bill.unit?.property?.owner_name || 'N/A',
         status: 'pending' as const,
         customerId: bill.tenant?.id ? parseInt(bill.tenant.id.slice(0, 8), 16) : undefined,
+        propertyId: bill.unit?.property?.id,
       }
     })
   } catch (error) {

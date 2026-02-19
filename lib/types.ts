@@ -83,6 +83,8 @@ export interface Statement {
   status: "paid" | "pending" | "overdue"
   pdfUrl?: string
   customerId?: number
+  /** Property UUID for filtering by manager/property */
+  propertyId?: string
   createdAt?: Date
 }
 

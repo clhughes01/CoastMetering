@@ -1,8 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
+import { adminPathWithFilter } from "@/lib/admin-filter"
 import {
   Users,
   FileText,
@@ -70,7 +71,11 @@ interface SidebarProps {
 
 export function Sidebar({ className }: SidebarProps) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [collapsed, setCollapsed] = useState(false)
+  const manager = searchParams.get("manager") || undefined
+  const property = searchParams.get("property") || undefined
+  const linkParams = { manager: manager ?? null, property: property ?? null }
 
   return (
     <>
@@ -103,7 +108,7 @@ export function Sidebar({ className }: SidebarProps) {
         <div className="flex flex-col h-full">
           <div className="flex items-center justify-between h-16 px-3 bg-card border-b border-border">
             <Link
-              href="/admin/dashboard"
+              href={adminPathWithFilter("/admin/dashboard", linkParams)}
               className={cn(
                 "flex items-center min-w-0 rounded-lg transition-opacity hover:opacity-90",
                 collapsed ? "justify-center w-10 h-10" : "gap-2 flex-1 py-1"
@@ -137,11 +142,12 @@ export function Sidebar({ className }: SidebarProps) {
                 )}
                 <ul className="space-y-1">
                   {section.items.map((item) => {
+                    const href = adminPathWithFilter(item.href, linkParams)
                     const isActive = pathname === item.href
                     return (
                       <li key={item.name}>
                         <Link
-                          href={item.href}
+                          href={href}
                           className={cn(
                             "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
                             isActive

@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Header } from "@/components/manager/header"
 import { DataTable } from "@/components/manager/data-table"
 import { Button } from "@/components/ui/button"
@@ -9,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FileText, Download } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { getStatements } from "@/lib/data"
+import { createSupabaseClient } from "@/lib/supabase/client"
 import type { Statement } from "@/lib/types"
 
 const BASE = "/admin"
@@ -63,7 +65,12 @@ const columns = [
 ]
 
 export default function AdminStatementsPage() {
+  const searchParams = useSearchParams()
+  const managerId = searchParams.get("manager") || undefined
+  const propertyId = searchParams.get("property") || undefined
+
   const [data, setData] = useState<Statement[]>([])
+  const [properties, setProperties] = useState<Array<{ id: string; manager_id: string | null }>>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -73,14 +80,31 @@ export default function AdminStatementsPage() {
   const loadStatements = async () => {
     try {
       setLoading(true)
-      const statementsData = await getStatements()
+      const [statementsData, propsRes] = await Promise.all([
+        getStatements(),
+        createSupabaseClient().from("properties").select("id, manager_id"),
+      ])
       setData(statementsData)
+      setProperties(propsRes.data || [])
     } catch (error) {
       console.error("Error loading statements:", error)
     } finally {
       setLoading(false)
     }
   }
+
+  const filteredPropertyIds = useMemo(() => {
+    let ids = new Set(properties.map((p) => p.id))
+    if (managerId) ids = new Set(properties.filter((p) => p.manager_id === managerId).map((p) => p.id))
+    if (propertyId) ids = ids.has(propertyId) ? new Set([propertyId]) : new Set()
+    return ids
+  }, [properties, managerId, propertyId])
+
+  const filteredData = useMemo(() => {
+    if (!managerId && !propertyId) return data
+    if (filteredPropertyIds.size === 0) return []
+    return data.filter((s) => s.propertyId && filteredPropertyIds.has(s.propertyId))
+  }, [data, filteredPropertyIds, managerId, propertyId])
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -143,7 +167,7 @@ export default function AdminStatementsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <DataTable data={data} columns={columns} showPrint={true} />
+            <DataTable data={filteredData} columns={columns} showPrint={true} />
           </CardContent>
         </Card>
       </main>

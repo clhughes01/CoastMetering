@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Header } from "@/components/manager/header"
 import { DataTable } from "@/components/manager/data-table"
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Download, Plus, Users, UserRoundCog } from "lucide-react"
 import { getCustomers } from "@/lib/data"
+import { createSupabaseClient } from "@/lib/supabase/client"
 import type { Customer } from "@/lib/types"
 import {
   CreateUnitModal,
@@ -56,7 +58,12 @@ function getColumns(onChangeTenant: (customer: Customer) => void) {
 }
 
 export default function AdminCustomersPage() {
+  const searchParams = useSearchParams()
+  const managerId = searchParams.get("manager") || undefined
+  const propertyId = searchParams.get("property") || undefined
+
   const [data, setData] = useState<Customer[]>([])
+  const [properties, setProperties] = useState<Array<{ id: string; manager_id: string | null }>>([])
   const [loading, setLoading] = useState(true)
   const [isCreateUnitModalOpen, setIsCreateUnitModalOpen] = useState(false)
   const [isCreateTenantModalOpen, setIsCreateTenantModalOpen] = useState(false)
@@ -80,14 +87,31 @@ export default function AdminCustomersPage() {
   const loadCustomers = async () => {
     try {
       setLoading(true)
-      const customers = await getCustomers()
+      const [customers, propsRes] = await Promise.all([
+        getCustomers(),
+        createSupabaseClient().from("properties").select("id, manager_id"),
+      ])
       setData(customers)
+      setProperties(propsRes.data || [])
     } catch (error) {
       console.error("Error loading customers:", error)
     } finally {
       setLoading(false)
     }
   }
+
+  const filteredPropertyIds = useMemo(() => {
+    let ids = new Set(properties.map((p) => p.id))
+    if (managerId) ids = new Set(properties.filter((p) => p.manager_id === managerId).map((p) => p.id))
+    if (propertyId) ids = ids.has(propertyId) ? new Set([propertyId]) : new Set()
+    return ids
+  }, [properties, managerId, propertyId])
+
+  const filteredData = useMemo(() => {
+    if (!managerId && !propertyId) return data
+    if (filteredPropertyIds.size === 0) return []
+    return data.filter((c) => c.propertyId && filteredPropertyIds.has(c.propertyId))
+  }, [data, filteredPropertyIds, managerId, propertyId])
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -140,7 +164,7 @@ export default function AdminCustomersPage() {
           </CardHeader>
           <CardContent className="p-0">
             <DataTable
-              data={data}
+              data={filteredData}
               columns={getColumns(openChangeTenant)}
               showPrint={true}
             />

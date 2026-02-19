@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -53,12 +54,34 @@ type ApiResponse = {
 }
 
 export default function AdminPropertyManagersPage() {
+  const searchParams = useSearchParams()
+  const filterManagerId = searchParams.get("manager") || undefined
+  const filterPropertyId = searchParams.get("property") || undefined
+
   const [managers, setManagers] = useState<ManagerWithProperties[]>([])
   const [unassigned, setUnassigned] = useState<PropertyRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [updatingPropertyId, setUpdatingPropertyId] = useState<string | null>(null)
   const [assignSelection, setAssignSelection] = useState<Record<string, string>>({})
+
+  const filteredManagers = useMemo(() => {
+    if (!filterManagerId && !filterPropertyId) return managers
+    if (filterPropertyId) {
+      const managerWithProperty = managers.find((m) =>
+        m.properties.some((p) => p.id === filterPropertyId)
+      )
+      return managerWithProperty ? [managerWithProperty] : []
+    }
+    const one = managers.find((m) => m.id === filterManagerId)
+    return one ? [one] : []
+  }, [managers, filterManagerId, filterPropertyId])
+
+  const filteredUnassigned = useMemo(() => {
+    if (!filterManagerId && !filterPropertyId) return unassigned
+    if (filterPropertyId) return unassigned.filter((p) => p.id === filterPropertyId)
+    return unassigned
+  }, [unassigned, filterManagerId, filterPropertyId])
 
   const fetchData = useCallback(async () => {
     try {
@@ -105,6 +128,9 @@ export default function AdminPropertyManagersPage() {
       }
       setAssignSelection((prev) => ({ ...prev, [propertyId]: "" }))
       await fetchData()
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("admin-filter-refresh"))
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Update failed")
     } finally {
@@ -139,7 +165,7 @@ export default function AdminPropertyManagersPage() {
           </Card>
         )}
 
-        {unassigned.length > 0 && (
+        {filteredUnassigned.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -152,7 +178,7 @@ export default function AdminPropertyManagersPage() {
             </CardHeader>
             <CardContent>
               <ul className="space-y-3">
-                {unassigned.map((p) => (
+                {filteredUnassigned.map((p) => (
                   <li
                     key={p.id}
                     className="flex flex-wrap items-center gap-2 py-2 border-b border-border last:border-0"
@@ -205,15 +231,19 @@ export default function AdminPropertyManagersPage() {
             <UserCog className="h-5 w-5" />
             Managers and their properties
           </h2>
-          {managers.length === 0 ? (
+          {filteredManagers.length === 0 ? (
             <Card>
               <CardContent className="pt-6">
-                <p className="text-muted-foreground">No property managers found.</p>
+                <p className="text-muted-foreground">
+                  {filterManagerId || filterPropertyId
+                    ? "No property managers match the current filter."
+                    : "No property managers found."}
+                </p>
               </CardContent>
             </Card>
           ) : (
             <div className="grid gap-4">
-              {managers.map((manager) => (
+              {filteredManagers.map((manager) => (
                 <Card key={manager.id}>
                   <CardHeader>
                     <CardTitle className="text-base flex items-center gap-2">
@@ -238,14 +268,22 @@ export default function AdminPropertyManagersPage() {
                     </div>
                   </CardHeader>
                     <CardContent>
-                    <p className="text-sm font-medium text-foreground mb-2">
-                      Properties ({manager.properties.length})
-                    </p>
-                    {manager.properties.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No properties assigned.</p>
-                    ) : (
-                      <ul className="space-y-4 text-sm">
-                        {manager.properties.map((p) => {
+                    {(() => {
+                      const propsToShow = filterPropertyId
+                        ? manager.properties.filter((p) => p.id === filterPropertyId)
+                        : manager.properties
+                      return (
+                        <>
+                          <p className="text-sm font-medium text-foreground mb-2">
+                            Properties ({propsToShow.length})
+                          </p>
+                          {propsToShow.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              {filterPropertyId ? "This property is not assigned to this manager." : "No properties assigned."}
+                            </p>
+                          ) : (
+                            <ul className="space-y-4 text-sm">
+                              {propsToShow.map((p) => {
                           const units = p.units ?? []
                           const totalUnits = units.length
                           const totalTenants = units.reduce(
@@ -370,8 +408,11 @@ export default function AdminPropertyManagersPage() {
                             </li>
                           )
                         })}
-                      </ul>
-                    )}
+                            </ul>
+                          )}
+                        </>
+                      )
+                    })()}
                   </CardContent>
                 </Card>
               ))}

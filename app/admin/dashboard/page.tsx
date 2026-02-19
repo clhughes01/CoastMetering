@@ -1,22 +1,32 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, FileText, DollarSign, Building } from "lucide-react"
+import { Users, FileText, DollarSign, Building, TrendingUp } from "lucide-react"
 import Link from "next/link"
 import { getCustomers, getStatements, getPayments } from "@/lib/data"
 import { createSupabaseClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Droplets } from "lucide-react"
+import { adminPathWithFilter } from "@/lib/admin-filter"
 
 const BASE = "/admin"
 
+/** Placeholder: fee % Coast Metering takes from revenue (e.g. 5%). Replace with config/settings later. */
+const COAST_METERING_FEE_PERCENT = 5
+
 export default function AdminDashboardPage() {
+  const searchParams = useSearchParams()
+  const managerId = searchParams.get("manager") || undefined
+  const propertyId = searchParams.get("property") || undefined
+  const linkParams = { manager: managerId ?? null, property: propertyId ?? null }
+
   const [customers, setCustomers] = useState<any[]>([])
   const [statements, setStatements] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
-  const [propertiesCount, setPropertiesCount] = useState<number | null>(null)
+  const [properties, setProperties] = useState<Array<{ id: string; manager_id: string | null }>>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -26,43 +36,78 @@ export default function AdminDashboardPage() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [customersData, statementsData, paymentsData] = await Promise.all([
+      const supabase = createSupabaseClient()
+      const [customersData, statementsData, paymentsData, propsRes] = await Promise.all([
         getCustomers(),
         getStatements(),
         getPayments(),
+        supabase.from("properties").select("id, manager_id"),
       ])
       setCustomers(customersData)
       setStatements(statementsData)
       setPayments(paymentsData)
-      try {
-        const supabase = createSupabaseClient()
-        const { count } = await supabase.from("properties").select("*", { count: "exact", head: true })
-        setPropertiesCount(count ?? 0)
-      } catch {
-        setPropertiesCount(null)
-      }
+      setProperties(propsRes.data || [])
     } catch (error) {
       console.error("Error loading dashboard data:", error)
       setCustomers([])
       setStatements([])
       setPayments([])
+      setProperties([])
     } finally {
       setLoading(false)
     }
   }
 
-  const pendingStatements = statements.filter((s: any) => s.status === "pending").length
-  const successfulPayments = payments.filter((p: any) => p.status === "succeeded")
+  const filteredPropertyIds = useMemo(() => {
+    let ids = new Set(properties.map((p) => p.id))
+    if (managerId) {
+      ids = new Set(properties.filter((p) => p.manager_id === managerId).map((p) => p.id))
+    }
+    if (propertyId && ids.has(propertyId)) {
+      ids = new Set([propertyId])
+    } else if (propertyId) {
+      ids = new Set()
+    }
+    return ids
+  }, [properties, managerId, propertyId])
+
+  const filteredCustomers = useMemo(() => {
+    if (filteredPropertyIds.size === 0 && (managerId || propertyId)) return []
+    if (!managerId && !propertyId) return customers
+    return customers.filter((c: any) => c.propertyId && filteredPropertyIds.has(c.propertyId))
+  }, [customers, filteredPropertyIds, managerId, propertyId])
+
+  const filteredStatements = useMemo(() => {
+    if (filteredPropertyIds.size === 0 && (managerId || propertyId)) return []
+    if (!managerId && !propertyId) return statements
+    return statements.filter((s: any) => s.propertyId && filteredPropertyIds.has(s.propertyId))
+  }, [statements, filteredPropertyIds, managerId, propertyId])
+
+  const accountNumbersInScope = useMemo(
+    () => new Set(filteredCustomers.map((c: any) => c.accountNumber)),
+    [filteredCustomers]
+  )
+
+  const filteredPayments = useMemo(() => {
+    if (filteredPropertyIds.size === 0 && (managerId || propertyId)) return []
+    if (!managerId && !propertyId) return payments
+    return payments.filter((p: any) => accountNumbersInScope.has(p.accountNumber))
+  }, [payments, accountNumbersInScope, managerId, propertyId])
+
+  const propertiesCount = filteredPropertyIds.size
+  const pendingStatements = filteredStatements.filter((s: any) => s.status === "pending").length
+  const successfulPayments = filteredPayments.filter((p: any) => p.status === "succeeded")
   const totalRevenue = successfulPayments.reduce((sum, p) => {
     const amount = Number.parseFloat(String(p.totalAmount).replace(/[$,]/g, ""))
     return sum + amount
   }, 0)
+  const coastMeteringProfit = (totalRevenue * COAST_METERING_FEE_PERCENT) / 100
 
   const stats = [
-    { title: "Total Customers", value: customers.length.toString(), change: "From your account", icon: Users, href: `${BASE}/customers` },
-    { title: "Active Properties", value: propertiesCount !== null ? propertiesCount.toString() : "—", change: "View properties", icon: Building, href: `${BASE}/properties` },
-    { title: "Pending Statements", value: pendingStatements.toString(), change: pendingStatements > 0 ? "Due soon" : "All caught up", icon: FileText, href: `${BASE}/statements` },
-    { title: "Monthly Revenue", value: `$${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, change: "From payments", icon: DollarSign, href: `${BASE}/payments` },
+    { title: "Total Customers", value: filteredCustomers.length.toString(), change: "In filtered view", icon: Users, href: adminPathWithFilter(`${BASE}/customers`, linkParams) },
+    { title: "Active Properties", value: propertiesCount.toString(), change: "In filtered view", icon: Building, href: adminPathWithFilter(`${BASE}/properties`, linkParams) },
+    { title: "Pending Statements", value: pendingStatements.toString(), change: pendingStatements > 0 ? "Due soon" : "All caught up", icon: FileText, href: adminPathWithFilter(`${BASE}/statements`, linkParams) },
+    { title: "Monthly Revenue", value: `$${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, change: "From payments", icon: DollarSign, href: adminPathWithFilter(`${BASE}/payments`, linkParams) },
   ]
 
   const recentActivity = [
@@ -104,6 +149,28 @@ export default function AdminDashboardPage() {
             </Link>
           ))}
         </div>
+
+        {/* Coast Metering profit (based on fees) — placeholder until fee structure is configured */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <TrendingUp className="h-5 w-5 text-primary" />
+              Coast Metering profit
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Estimated from fees on revenue. Fee structure can be configured in Settings when available.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">
+              ${coastMeteringProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {COAST_METERING_FEE_PERCENT}% of monthly revenue (placeholder rate)
+            </p>
+          </CardContent>
+        </Card>
+
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
@@ -171,22 +238,22 @@ export default function AdminDashboardPage() {
           <CardContent>
             <div className="flex flex-wrap gap-3">
               <Button asChild>
-                <Link href={`${BASE}/customers`}>Add Customer</Link>
+                <Link href={adminPathWithFilter(`${BASE}/customers`, linkParams)}>Add Customer</Link>
               </Button>
               <Button variant="secondary" asChild>
-                <Link href={`${BASE}/statements`}>Statements</Link>
+                <Link href={adminPathWithFilter(`${BASE}/statements`, linkParams)}>Statements</Link>
               </Button>
               <Button variant="secondary" asChild>
-                <Link href={`${BASE}/utility-bills`}>Utility Bills</Link>
+                <Link href={adminPathWithFilter(`${BASE}/utility-bills`, linkParams)}>Utility Bills</Link>
               </Button>
               <Button variant="secondary" asChild>
-                <Link href={`${BASE}/textract-test`}>Extract Bill (Textract)</Link>
+                <Link href={adminPathWithFilter(`${BASE}/textract-test`, linkParams)}>Extract Bill (Textract)</Link>
               </Button>
               <Button variant="secondary" asChild>
-                <Link href={`${BASE}/payments`}>Payments</Link>
+                <Link href={adminPathWithFilter(`${BASE}/payments`, linkParams)}>Payments</Link>
               </Button>
               <Button variant="outline" asChild>
-                <Link href={`${BASE}/property-managers`}>Property managers</Link>
+                <Link href={adminPathWithFilter(`${BASE}/property-managers`, linkParams)}>Property managers</Link>
               </Button>
             </div>
           </CardContent>
