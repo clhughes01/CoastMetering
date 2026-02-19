@@ -263,12 +263,12 @@ export async function signIn(email: string, password: string): Promise<{ user: U
     const user: User = {
       id: profile.id,
       email: profile.email,
-      role: profile.role as 'manager' | 'tenant',
+      role: profile.role as User['role'],
       name: profile.name || '',
       phone: profile.phone,
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
-      ...(profile.role === 'manager' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
+      ...(profile.role === 'manager' || profile.role === 'admin' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
     }
 
     return { user, error: null }
@@ -326,12 +326,12 @@ export async function getCurrentUser(): Promise<User | null> {
           return {
             id: profile.id,
             email: profile.email,
-            role: profile.role as 'manager' | 'tenant',
+            role: profile.role as User['role'],
             name: profile.name || '',
             phone: profile.phone,
             createdAt: new Date(profile.created_at),
             updatedAt: new Date(profile.updated_at),
-            ...(profile.role === 'manager' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
+            ...(profile.role === 'manager' || profile.role === 'admin' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
           }
         }
       } else {
@@ -353,12 +353,12 @@ export async function getCurrentUser(): Promise<User | null> {
       return {
         id: profile.id,
         email: profile.email,
-        role: profile.role as 'manager' | 'tenant',
+        role: profile.role as User['role'],
         name: profile.name || '',
         phone: profile.phone,
         createdAt: new Date(profile.created_at),
         updatedAt: new Date(profile.updated_at),
-        ...(profile.role === 'manager' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
+        ...(profile.role === 'manager' || profile.role === 'admin' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
       }
     }
 

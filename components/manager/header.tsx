@@ -19,9 +19,11 @@ import type { User as UserType } from "@/lib/types"
 interface HeaderProps {
   title: string
   breadcrumbs?: { label: string; href?: string }[]
+  /** Base path for nav links (e.g. "/admin" or "/manager"). Defaults to "/manager". */
+  basePath?: string
 }
 
-export function Header({ title, breadcrumbs }: HeaderProps) {
+export function Header({ title, breadcrumbs, basePath = "/manager" }: HeaderProps) {
   const router = useRouter()
   const [user, setUser] = useState<UserType | null>(null)
   const [loading, setLoading] = useState(true)
@@ -73,7 +75,7 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav className="flex items-center text-sm text-muted-foreground">
             <span className="mx-2 hidden md:inline">/</span>
-            <Link href="/manager/dashboard" className="hover:text-foreground transition-colors">
+            <Link href={`${basePath}/dashboard`} className="hover:text-foreground transition-colors">
               <Home className="h-4 w-4" />
             </Link>
             <span className="mx-2">/</span>
@@ -125,13 +127,13 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/manager/settings">
+              <Link href={`${basePath}/settings`}>
                 <User className="mr-2 h-4 w-4" />
                 Profile
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/manager/settings">
+              <Link href={`${basePath}/settings`}>
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
               </Link>

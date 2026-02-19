@@ -5,7 +5,7 @@
 // should return data matching these interfaces.
 // ===========================================
 
-export type UserRole = "manager" | "tenant"
+export type UserRole = "admin" | "manager" | "tenant"
 
 export interface User {
   id: string

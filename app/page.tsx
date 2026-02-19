@@ -41,7 +41,9 @@ export default function LoginPage() {
 
       if (user) {
         // Route based on user role
-        if (user.role === "manager") {
+        if (user.role === "admin") {
+          router.push("/admin/dashboard")
+        } else if (user.role === "manager") {
           router.push("/manager/dashboard")
         } else {
           router.push("/tenant/tenant.new/dashboard")
