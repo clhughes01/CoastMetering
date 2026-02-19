@@ -66,7 +66,8 @@ export async function GET(request: NextRequest) {
       return acc
     }, {})
 
-    const creatorIds = [...new Set((bills || []).map((b) => (b as { created_by?: string | null }).created_by).filter(Boolean))] as string[]
+    const creatorIdsRaw = (bills || []).map((b) => (b as { created_by?: string | null }).created_by).filter((id): id is string => Boolean(id))
+    const creatorIds = creatorIdsRaw.filter((id, i) => creatorIdsRaw.indexOf(id) === i)
     const creators: Record<string, string> = {}
     if (creatorIds.length > 0) {
       const { data: profiles } = await admin
@@ -78,7 +79,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const propertyIds = [...new Set((bills || []).map((b) => (b as { property_id?: string | null }).property_id).filter(Boolean))] as string[]
+    const propertyIdsRaw = (bills || []).map((b) => (b as { property_id?: string | null }).property_id).filter((id): id is string => Boolean(id))
+    const propertyIds = propertyIdsRaw.filter((id, i) => propertyIdsRaw.indexOf(id) === i)
     const propertyLabels: Record<string, string> = {}
     if (propertyIds.length > 0) {
       const { data: properties } = await admin
