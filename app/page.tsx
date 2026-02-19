@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { Suspense } from "react"
 
 import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -13,7 +13,7 @@ import { Logo } from "@/components/logo"
 import { signIn, getCurrentUser } from "@/lib/auth"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [showPassword, setShowPassword] = useState(false)
@@ -338,5 +338,40 @@ export default function LoginPage() {
         </div>
       </footer>
     </div>
+  )
+}
+
+function LoginPageFallback() {
+  return (
+    <div className="min-h-screen flex flex-col bg-muted/30">
+      <header className="border-b border-border bg-card">
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+          <Logo variant="dark" context="header" />
+          <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
+            <a href="https://coastmetering.com" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">About</a>
+            <a href="https://coastmetering.com/#contact" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">Contact</a>
+          </nav>
+        </div>
+      </header>
+      <main className="flex-1 flex items-center justify-center p-4 md:p-8">
+        <div className="w-full max-w-md flex justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </main>
+      <footer className="border-t border-border bg-card py-4">
+        <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
+          <p>© 2026 Coast Metering. All rights reserved.</p>
+          <p className="mt-1">365 West 2nd Avenue Ste 100, Escondido, CA</p>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginPageFallback />}>
+      <LoginPageContent />
+    </Suspense>
   )
 }
