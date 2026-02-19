@@ -20,8 +20,9 @@ function LoginPageContent() {
   const [isLoading, setIsLoading] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [firstName, setFirstName] = useState("")
-  const [lastName, setLastName] = useState("")
+  const [signupEmail, setSignupEmail] = useState("")
+  const [signupFirstName, setSignupFirstName] = useState("")
+  const [signupLastName, setSignupLastName] = useState("")
   const [inviteCode, setInviteCode] = useState("")
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -81,12 +82,12 @@ function LoginPageContent() {
     setError("")
     setSuccess("")
 
-    if (!email || !inviteCode.trim()) {
+    if (!signupEmail.trim() || !inviteCode.trim()) {
       setError("Email and invite code are required.")
       setIsLoading(false)
       return
     }
-    if (!firstName.trim() || !lastName.trim()) {
+    if (!signupFirstName.trim() || !signupLastName.trim()) {
       setError("First name and last name are required.")
       setIsLoading(false)
       return
@@ -97,9 +98,9 @@ function LoginPageContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
+          email: signupEmail.trim().toLowerCase(),
+          firstName: signupFirstName.trim(),
+          lastName: signupLastName.trim(),
           code: inviteCode.trim().toUpperCase(),
         }),
       })
@@ -115,9 +116,9 @@ function LoginPageContent() {
         data.message || "Check your email for an invite link. Click it to create your account and set your password."
       )
       setActiveTab("login")
-      setEmail("")
-      setFirstName("")
-      setLastName("")
+      setSignupEmail("")
+      setSignupFirstName("")
+      setSignupLastName("")
       setInviteCode("")
     } catch (err: any) {
       setError(err.message || "An error occurred during signup.")
@@ -277,9 +278,10 @@ function LoginPageContent() {
                           placeholder="John" 
                           required
                           className="h-11"
-                          value={firstName}
-                          onChange={(e) => setFirstName(e.target.value)}
+                          value={signupFirstName}
+                          onChange={(e) => setSignupFirstName(e.target.value)}
                           disabled={isLoading}
+                          autoComplete="given-name"
                         />
                       </div>
                       <div className="space-y-2">
@@ -290,9 +292,10 @@ function LoginPageContent() {
                           placeholder="Doe" 
                           required
                           className="h-11"
-                          value={lastName}
-                          onChange={(e) => setLastName(e.target.value)}
+                          value={signupLastName}
+                          onChange={(e) => setSignupLastName(e.target.value)}
                           disabled={isLoading}
+                          autoComplete="family-name"
                         />
                       </div>
                     </div>
@@ -301,13 +304,15 @@ function LoginPageContent() {
                       <Label htmlFor="signup-email">Email address</Label>
                       <Input 
                         id="signup-email" 
+                        name="signup_email"
                         type="email" 
                         placeholder="you@example.com" 
                         required
                         className="h-11"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        value={signupEmail}
+                        onChange={(e) => setSignupEmail(e.target.value)}
                         disabled={isLoading}
+                        autoComplete="email"
                       />
                     </div>
                     
