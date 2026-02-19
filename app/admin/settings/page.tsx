@@ -7,7 +7,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { User, Building, Bell, Shield, Save, Loader2 } from "lucide-react"
+import { User, Building, Bell, Shield, Save, Loader2, KeyRound, Copy } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { getCurrentUser } from "@/lib/auth"
 import type { User as UserType } from "@/lib/types"
@@ -29,6 +36,12 @@ export default function AdminSettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+
+  const [inviteRole, setInviteRole] = useState<"tenant" | "manager">("tenant")
+  const [generatingCode, setGeneratingCode] = useState(false)
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null)
+  const [generatedExpiresAt, setGeneratedExpiresAt] = useState<string | null>(null)
+  const [inviteError, setInviteError] = useState("")
 
   useEffect(() => {
     loadUser()
@@ -120,6 +133,38 @@ export default function AdminSettingsPage() {
     }
   }
 
+  const handleGenerateInviteCode = async () => {
+    setGeneratingCode(true)
+    setInviteError("")
+    setGeneratedCode(null)
+    setGeneratedExpiresAt(null)
+    try {
+      const res = await fetch("/api/invite-codes/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: inviteRole }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setInviteError(data.error || "Failed to generate code.")
+        return
+      }
+      setGeneratedCode(data.code)
+      setGeneratedExpiresAt(data.expiresAt || null)
+    } catch (err: any) {
+      setInviteError(err.message || "Failed to generate code.")
+    } finally {
+      setGeneratingCode(false)
+    }
+  }
+
+  const copyInviteCode = () => {
+    if (!generatedCode) return
+    navigator.clipboard.writeText(generatedCode)
+    setSuccess("Code copied to clipboard.")
+    setTimeout(() => setSuccess(""), 2000)
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header
@@ -130,7 +175,7 @@ export default function AdminSettingsPage() {
 
       <main className="flex-1 p-4 md:p-6">
         <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-4">
+          <TabsList className="grid w-full max-w-2xl grid-cols-5">
             <TabsTrigger value="profile" className="flex items-center gap-2">
               <User className="h-4 w-4" />
               <span className="hidden sm:inline">Profile</span>
@@ -138,6 +183,10 @@ export default function AdminSettingsPage() {
             <TabsTrigger value="company" className="flex items-center gap-2">
               <Building className="h-4 w-4" />
               <span className="hidden sm:inline">Company</span>
+            </TabsTrigger>
+            <TabsTrigger value="invite" className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4" />
+              <span className="hidden sm:inline">Invite</span>
             </TabsTrigger>
             <TabsTrigger value="notifications" className="flex items-center gap-2">
               <Bell className="h-4 w-4" />
@@ -274,6 +323,72 @@ export default function AdminSettingsPage() {
                       )}
                     </Button>
                   </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="invite">
+            <Card>
+              <CardHeader>
+                <CardTitle>Invite codes</CardTitle>
+                <CardDescription>
+                  Generate a one-time code for new tenants or property managers. Codes expire in 24 hours.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {inviteError && (
+                  <div className="p-3 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md">
+                    {inviteError}
+                  </div>
+                )}
+                {success && (
+                  <div className="p-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-md dark:bg-green-950/30 dark:border-green-800 dark:text-green-300">
+                    {success}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-2">
+                    <Label>Account type</Label>
+                    <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as "tenant" | "manager")}>
+                      <SelectTrigger className="w-[200px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tenant">Tenant</SelectItem>
+                        <SelectItem value="manager">Property manager</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={handleGenerateInviteCode} disabled={generatingCode}>
+                    {generatingCode ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <KeyRound className="h-4 w-4 mr-2" />
+                        Generate code
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {generatedCode && (
+                  <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
+                    <p className="text-sm text-muted-foreground">Share this code with the person who will sign up:</p>
+                    <div className="flex items-center gap-2">
+                      <code className="text-xl font-mono font-semibold tracking-wider bg-background px-3 py-2 rounded border">
+                        {generatedCode}
+                      </code>
+                      <Button variant="outline" size="icon" onClick={copyInviteCode} title="Copy code">
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Expires in 24 hours. One-time use only.
+                    </p>
+                  </div>
                 )}
               </CardContent>
             </Card>
