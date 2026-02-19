@@ -58,7 +58,7 @@ function LoginPageContent() {
       }
 
       if (user) {
-        // Route based on user role
+        setIsLoading(false)
         if (user.role === "admin") {
           router.push("/admin/dashboard")
         } else if (user.role === "manager") {
@@ -120,6 +120,7 @@ function LoginPageContent() {
       setSignupFirstName("")
       setSignupLastName("")
       setInviteCode("")
+      setIsLoading(false)
     } catch (err: any) {
       setError(err.message || "An error occurred during signup.")
       setIsLoading(false)
