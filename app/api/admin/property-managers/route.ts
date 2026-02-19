@@ -1,6 +1,26 @@
 import { createSupabaseAdminClient, createSupabaseClientFromCookies } from "@/lib/supabase/client"
 import { NextResponse } from "next/server"
 
+/** Shape of a property row when selected with units and tenants */
+type PropertyWithUnits = {
+  id: string
+  address: string | null
+  city: string | null
+  state: string | null
+  zip_code: string | null
+  manager_id?: string | null
+  units?: Array<{
+    id: string
+    unit_number: string
+    tenants: Array<{
+      id: string
+      name: string
+      email: string | null
+      move_out_date: string | null
+    }>
+  }> | null
+}
+
 /**
  * GET /api/admin/property-managers
  * Returns all users with role 'manager' and for each, the properties they manage (manager_id = user id).
@@ -67,14 +87,15 @@ export async function GET() {
       )
     }
 
-    const propertiesByManager = (properties || []).reduce(
-      (acc: Record<string, typeof properties>, p: { manager_id?: string }) => {
-        const mid = p.manager_id || "_unassigned"
+    const propertyList = (properties || []) as PropertyWithUnits[]
+    const propertiesByManager = propertyList.reduce(
+      (acc: Record<string, PropertyWithUnits[]>, p) => {
+        const mid = p.manager_id ?? "_unassigned"
         if (!acc[mid]) acc[mid] = []
         acc[mid].push(p)
         return acc
       },
-      {}
+      {} as Record<string, PropertyWithUnits[]>
     )
 
     const result = (managers || []).map((m) => ({
