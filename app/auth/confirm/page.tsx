@@ -15,6 +15,7 @@ import { Loader2 } from "lucide-react"
 export default function AuthConfirmPage() {
   const router = useRouter()
   const [status, setStatus] = useState<"loading" | "error">("loading")
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const run = async () => {
@@ -24,6 +25,18 @@ export default function AuthConfirmPage() {
       const query = window.location.search?.slice(1) || ""
       const hashParams = new URLSearchParams(hash)
       const queryParams = new URLSearchParams(query)
+
+      const errorCode = hashParams.get("error_code") || queryParams.get("error_code")
+      const errorDesc = hashParams.get("error_description") || queryParams.get("error_description")
+      if (errorCode || errorDesc) {
+        setErrorMessage(
+          errorCode === "otp_expired" || (errorDesc && errorDesc.toLowerCase().includes("expired"))
+            ? "This invite link has expired or was already used. Some email clients open links in the background, which can use the link before you click. Please ask your admin or property manager for a new invite and try again, or sign in if you already have an account."
+            : errorDesc?.replace(/\+/g, " ") || "Something went wrong. Please request a new invite."
+        )
+        setStatus("error")
+        return
+      }
 
       const code = queryParams.get("code") || hashParams.get("code")
       if (code) {
@@ -82,8 +95,10 @@ export default function AuthConfirmPage() {
 
   if (status === "error") {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-muted/30">
-        <p className="text-destructive mb-4">Invalid or expired link. Please request a new invite.</p>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-muted/30 max-w-md mx-auto text-center">
+        <p className="text-destructive mb-4">
+          {errorMessage || "Invalid or expired link. Please request a new invite."}
+        </p>
         <a href="/" className="text-primary hover:underline">Return to sign in</a>
       </div>
     )
