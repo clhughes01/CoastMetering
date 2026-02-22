@@ -33,7 +33,7 @@ const navigation = [
     title: "MANAGE",
     items: [
       { name: "Properties", href: "/admin/properties", icon: Building2 },
-      { name: "Customers", href: "/admin/customers", icon: Users },
+      { name: "Tenants", href: "/admin/customers", icon: Users },
       { name: "Property Managers", href: "/admin/property-managers", icon: UserCog },
     ],
   },

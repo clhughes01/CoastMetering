@@ -104,7 +104,7 @@ export default function AdminDashboardPage() {
   const coastMeteringProfit = (totalRevenue * COAST_METERING_FEE_PERCENT) / 100
 
   const stats = [
-    { title: "Total Customers", value: filteredCustomers.length.toString(), change: "In filtered view", icon: Users, href: adminPathWithFilter(`${BASE}/customers`, linkParams) },
+    { title: "Total Tenants", value: filteredCustomers.length.toString(), change: "In filtered view", icon: Users, href: adminPathWithFilter(`${BASE}/customers`, linkParams) },
     { title: "Active Properties", value: propertiesCount.toString(), change: "In filtered view", icon: Building, href: adminPathWithFilter(`${BASE}/properties`, linkParams) },
     { title: "Pending Statements", value: pendingStatements.toString(), change: pendingStatements > 0 ? "Due soon" : "All caught up", icon: FileText, href: adminPathWithFilter(`${BASE}/statements`, linkParams) },
     { title: "Monthly Revenue", value: `$${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, change: "From payments", icon: DollarSign, href: adminPathWithFilter(`${BASE}/payments`, linkParams) },
@@ -238,7 +238,7 @@ export default function AdminDashboardPage() {
           <CardContent>
             <div className="flex flex-wrap gap-3">
               <Button asChild>
-                <Link href={adminPathWithFilter(`${BASE}/customers`, linkParams)}>Add Customer</Link>
+                <Link href={adminPathWithFilter(`${BASE}/customers`, linkParams)}>Add Tenant</Link>
               </Button>
               <Button variant="secondary" asChild>
                 <Link href={adminPathWithFilter(`${BASE}/statements`, linkParams)}>Statements</Link>

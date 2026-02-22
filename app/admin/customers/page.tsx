@@ -116,8 +116,8 @@ export default function AdminCustomersPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header
-        title="Customers"
-        breadcrumbs={[{ label: "Customers" }]}
+        title="Tenants"
+        breadcrumbs={[{ label: "Tenants" }]}
         basePath={BASE}
       />
 
@@ -159,7 +159,7 @@ export default function AdminCustomersPage() {
           <CardHeader className="pb-0">
             <CardTitle className="flex items-center gap-2 text-lg">
               <Users className="h-5 w-5 text-primary" />
-              Manage Customers
+              Manage Tenants
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">

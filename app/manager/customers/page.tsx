@@ -80,8 +80,8 @@ export default function CustomersPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header 
-        title="Customers" 
-        breadcrumbs={[{ label: "Customers" }]} 
+        title="Tenants" 
+        breadcrumbs={[{ label: "Tenants" }]} 
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -119,12 +119,12 @@ export default function CustomersPage() {
           </CardContent>
         </Card>
 
-        {/* Customers Table */}
+        {/* Tenants Table */}
         <Card>
           <CardHeader className="pb-0">
             <CardTitle className="flex items-center gap-2 text-lg">
               <Users className="h-5 w-5 text-primary" />
-              Manage Customers
+              Manage Tenants
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">

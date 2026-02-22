@@ -58,7 +58,7 @@ export default function DashboardPage() {
 
   const stats = [
     {
-      title: "Total Customers",
+      title: "Total Tenants",
       value: customers.length.toString(),
       change: "From your account",
       icon: Users,
@@ -206,7 +206,7 @@ const recentActivity = [
           <CardContent>
             <div className="flex flex-wrap gap-3">
               <Button asChild>
-                <Link href="/manager/customers">Add Customer</Link>
+                <Link href="/manager/customers">Add Tenant</Link>
               </Button>
               <Button variant="secondary" asChild>
                 <Link href="/manager/statements">Statements</Link>

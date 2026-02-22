@@ -60,7 +60,7 @@ You should see `role = 'manager'`.
 
 - The user will need to **sign out and sign back in** for the change to take effect
 - After signing in, they will be automatically routed to `/manager/dashboard` instead of `/tenant/tenant.new/dashboard`
-- They will have access to all manager features (viewing all properties, customers, statements, etc.)
+- They will have access to all manager features (viewing all properties, tenants, statements, etc.)
 
 ## Change Back to Tenant
 

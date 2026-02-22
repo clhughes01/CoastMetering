@@ -163,7 +163,7 @@ export default function AdminStatementsPage() {
           <CardHeader className="pb-0">
             <CardTitle className="flex items-center gap-2 text-lg">
               <FileText className="h-5 w-5 text-primary" />
-              Customer Statements
+              Tenant Statements
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
