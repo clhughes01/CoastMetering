@@ -90,7 +90,7 @@ export default function AdminPropertyManagersPage() {
       const res = await fetch("/api/admin/property-managers")
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || "Failed to load property managers")
+        throw new Error(data.error || "Failed to load Property Managers")
       }
       const json: ApiResponse = await res.json()
       setManagers(json.data || [])
@@ -141,9 +141,9 @@ export default function AdminPropertyManagersPage() {
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
-        <Header title="Property managers" basePath={BASE} />
+        <Header title="Property Managers" basePath={BASE} />
         <main className="flex-1 p-4 md:p-6 flex items-center justify-center">
-          <p className="text-muted-foreground">Loading property managers...</p>
+          <p className="text-muted-foreground">Loading Property Managers...</p>
         </main>
       </div>
     )
@@ -152,8 +152,8 @@ export default function AdminPropertyManagersPage() {
   return (
     <div className="flex flex-col min-h-screen">
       <Header
-        title="Property managers"
-        breadcrumbs={[{ label: "Property managers" }]}
+        title="Property Managers"
+        breadcrumbs={[{ label: "Property Managers" }]}
         basePath={BASE}
       />
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -173,7 +173,7 @@ export default function AdminPropertyManagersPage() {
                 Unassigned properties
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Assign a property manager below. Changes are saved to the database.
+                Assign a Property Manager below. Changes are saved to the database.
               </p>
             </CardHeader>
             <CardContent>
@@ -236,8 +236,8 @@ export default function AdminPropertyManagersPage() {
               <CardContent className="pt-6">
                 <p className="text-muted-foreground">
                   {filterManagerId || filterPropertyId
-                    ? "No property managers match the current filter."
-                    : "No property managers found."}
+                    ? "No Property Managers match the current filter."
+                    : "No Property Managers found."}
                 </p>
               </CardContent>
             </Card>

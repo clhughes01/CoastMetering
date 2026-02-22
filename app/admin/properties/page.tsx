@@ -29,6 +29,7 @@ export default function AdminPropertiesPage() {
   const propertyId = searchParams.get("property") || undefined
 
   const [properties, setProperties] = useState<Property[]>([])
+  const [managers, setManagers] = useState<{ id: string; name: string | null; email: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [isCreatePropertyModalOpen, setIsCreatePropertyModalOpen] = useState(false)
   const [isEditPropertyModalOpen, setIsEditPropertyModalOpen] = useState(false)
@@ -38,6 +39,14 @@ export default function AdminPropertiesPage() {
   useEffect(() => {
     loadProperties()
   }, [])
+
+  useEffect(() => {
+    if (!isCreatePropertyModalOpen) return
+    fetch('/api/admin/property-managers')
+      .then((res) => res.ok ? res.json() : { data: [] })
+      .then((json) => setManagers(json.data || []))
+      .catch(() => setManagers([]))
+  }, [isCreatePropertyModalOpen])
 
   const loadProperties = async () => {
     try {
@@ -235,6 +244,8 @@ export default function AdminPropertiesPage() {
             loadProperties()
             setIsCreatePropertyModalOpen(false)
           }}
+          requireManagerAssignment={true}
+          managers={managers}
         />
         <EditPropertyModal
           isOpen={isEditPropertyModalOpen}

@@ -266,7 +266,7 @@ function LoginPageContent() {
                         disabled={isLoading}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Get an invite code from your property manager or admin to create an account.
+                        Get an invite code from your Property Manager or admin to create an account.
                       </p>
                     </div>
 

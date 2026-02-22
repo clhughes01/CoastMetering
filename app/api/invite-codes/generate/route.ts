@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     if (profile.role === "manager" && role !== "tenant") {
       return NextResponse.json(
-        { error: "Property managers can only generate tenant invite codes." },
+        { error: "Property Managers can only generate tenant invite codes." },
         { status: 403 }
       )
     }

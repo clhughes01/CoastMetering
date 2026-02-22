@@ -1,13 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseAdminClient } from '@/lib/supabase/client'
+import { createSupabaseAdminClient, createSupabaseClientFromCookies } from '@/lib/supabase/client'
 
 /**
- * API endpoint for creating units
- * Uses admin client to bypass RLS policies
+ * API endpoint for creating units.
+ * Manager: can only create units on their properties or unassigned properties.
  */
 export async function POST(request: NextRequest) {
   try {
+    const supabaseAuth = await createSupabaseClientFromCookies()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const supabase = createSupabaseAdminClient()
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    const role = profile?.role
+    if (role !== 'admin' && role !== 'manager') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const body = await request.json()
 
     // Validate required fields
@@ -18,10 +33,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check if property exists
+    // Check if property exists and caller can access it
     const { data: property, error: propertyError } = await supabase
       .from('properties')
-      .select('id')
+      .select('id, manager_id')
       .eq('id', body.property_id)
       .single()
 
@@ -31,6 +46,11 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       )
     }
+    if (role === 'manager' && property.manager_id != null && property.manager_id !== user.id) {
+      return NextResponse.json(
+        { error: 'You can only add units to your own properties or unassigned properties' },
+        { status: 403 }
+      )
 
     // Check if unit number already exists for this property
     const { data: existingUnit } = await supabase

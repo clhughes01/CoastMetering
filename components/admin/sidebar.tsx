@@ -34,7 +34,7 @@ const navigation = [
     items: [
       { name: "Properties", href: "/admin/properties", icon: Building2 },
       { name: "Customers", href: "/admin/customers", icon: Users },
-      { name: "Property managers", href: "/admin/property-managers", icon: UserCog },
+      { name: "Property Managers", href: "/admin/property-managers", icon: UserCog },
     ],
   },
   {

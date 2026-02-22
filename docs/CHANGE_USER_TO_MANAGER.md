@@ -1,6 +1,6 @@
 # How to Change a User to Property Manager
 
-To make a user access the property manager portal, you need to change their `role` from `'tenant'` to `'manager'` in the database.
+To make a user access the Property Manager portal, you need to change their `role` from `'tenant'` to `'manager'` in the database.
 
 ## Method 1: Via Supabase Dashboard (Easiest)
 

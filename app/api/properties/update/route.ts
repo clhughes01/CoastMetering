@@ -1,13 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseAdminClient } from '@/lib/supabase/client'
+import { createSupabaseAdminClient, createSupabaseClientFromCookies } from '@/lib/supabase/client'
 
 /**
- * API endpoint for updating properties
- * Uses admin client to bypass RLS policies
+ * API endpoint for updating properties.
+ * Manager: can only update their properties or unassigned properties.
  */
 export async function PATCH(request: NextRequest) {
   try {
+    const supabaseAuth = await createSupabaseClientFromCookies()
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     const supabase = createSupabaseAdminClient()
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    const role = profile?.role
+    if (role !== 'admin' && role !== 'manager') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const body = await request.json()
 
     // Validate required fields
@@ -16,6 +31,20 @@ export async function PATCH(request: NextRequest) {
         { error: 'Missing required field: property_id' },
         { status: 400 }
       )
+    }
+
+    if (role === 'manager') {
+      const { data: prop } = await supabase
+        .from('properties')
+        .select('manager_id')
+        .eq('id', body.property_id)
+        .single()
+      if (!prop || (prop.manager_id != null && prop.manager_id !== user.id)) {
+        return NextResponse.json(
+          { error: 'You can only update your own properties or unassigned properties' },
+          { status: 403 }
+        )
+      }
     }
 
     // Build update object with only provided fields

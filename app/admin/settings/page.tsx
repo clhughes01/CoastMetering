@@ -333,7 +333,7 @@ export default function AdminSettingsPage() {
               <CardHeader>
                 <CardTitle>Invite codes</CardTitle>
                 <CardDescription>
-                  Generate a one-time code for new tenants or property managers. Codes expire in 24 hours.
+                  Generate a one-time code for new tenants or Property Managers. Codes expire in 24 hours.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -356,7 +356,7 @@ export default function AdminSettingsPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="tenant">Tenant</SelectItem>
-                        <SelectItem value="manager">Property manager</SelectItem>
+                        <SelectItem value="manager">Property Manager</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

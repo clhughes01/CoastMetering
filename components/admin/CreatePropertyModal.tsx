@@ -14,19 +14,28 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
+export type ManagerOption = { id: string; name: string | null; email: string }
+
 interface CreatePropertyModalProps {
   isOpen: boolean
   onClose: () => void
   onSuccess: () => void
+  /** When true, show required Property Manager dropdown (admin flow). When false/undefined, property is auto-assigned to current user (manager flow). */
+  requireManagerAssignment?: boolean
+  /** List of Property Managers for the dropdown. Required when requireManagerAssignment is true. */
+  managers?: ManagerOption[]
 }
 
 export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  requireManagerAssignment = false,
+  managers = [],
 }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedManagerId, setSelectedManagerId] = useState<string>('')
   const [units, setUnits] = useState<string[]>([''])
   const [formData, setFormData] = useState({
     address: '',
@@ -67,14 +76,24 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
       return
     }
 
+    if (requireManagerAssignment && !selectedManagerId) {
+      setError('Please select a Property Manager')
+      setLoading(false)
+      return
+    }
+
     try {
+      const createBody: Record<string, unknown> = { ...formData }
+      if (requireManagerAssignment && selectedManagerId) {
+        createBody.manager_id = selectedManagerId
+      }
       // First, create the property
       const propertyResponse = await fetch('/api/properties/create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(createBody),
       })
 
       const propertyResult = await propertyResponse.json()
@@ -122,6 +141,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
         gas_utility: '',
       })
       setUnits([''])
+      setSelectedManagerId('')
 
       onSuccess()
       onClose()
@@ -140,7 +160,9 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
         <DialogHeader>
           <DialogTitle>Create New Property</DialogTitle>
           <DialogDescription>
-            Add a new property to the system. All fields marked with * are required.
+            {requireManagerAssignment
+              ? 'Add a new property and assign a Property Manager. All fields marked with * are required.'
+              : 'Add a new property to the system. It will be assigned to you. All fields marked with * are required.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -228,6 +250,30 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               disabled={loading}
             />
           </div>
+
+          {requireManagerAssignment && managers.length > 0 && (
+            <div>
+              <Label htmlFor="manager_id">
+                Property Manager <span className="text-destructive">*</span>
+              </Label>
+              <select
+                id="manager_id"
+                required
+                value={selectedManagerId}
+                onChange={(e) => setSelectedManagerId(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={loading}
+              >
+                <option value="">Select Property Manager</option>
+                {managers.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || m.email}
+                    {m.email !== (m.name || '') ? ` (${m.email})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-4">
             <div>

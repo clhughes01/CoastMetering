@@ -31,7 +31,7 @@ export default function AuthConfirmPage() {
       if (errorCode || errorDesc) {
         setErrorMessage(
           errorCode === "otp_expired" || (errorDesc && errorDesc.toLowerCase().includes("expired"))
-            ? "This invite link has expired or was already used. Some email clients open links in the background, which can use the link before you click. Please ask your admin or property manager for a new invite and try again, or sign in if you already have an account."
+            ? "This invite link has expired or was already used. Some email clients open links in the background, which can use the link before you click. Please ask your admin or Property Manager for a new invite and try again, or sign in if you already have an account."
             : errorDesc?.replace(/\+/g, " ") || "Something went wrong. Please request a new invite."
         )
         setStatus("error")

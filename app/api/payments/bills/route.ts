@@ -36,7 +36,16 @@ export async function GET(request: NextRequest) {
       .order("period_month", { ascending: false })
 
     if (profile.role === "manager") {
-      query = query.eq("created_by", user.id)
+      const { data: managerPropertyIds } = await admin
+        .from("properties")
+        .select("id")
+        .or(`manager_id.eq.${user.id},manager_id.is.null`)
+      const ids = (managerPropertyIds || []).map((p) => p.id)
+      if (ids.length === 0) {
+        query = query.eq("property_id", "00000000-0000-0000-0000-000000000000")
+      } else {
+        query = query.in("property_id", ids)
+      }
     } else if (filterManagerId) {
       query = query.eq("created_by", filterManagerId)
     }

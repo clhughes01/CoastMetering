@@ -18,6 +18,7 @@ export function AdminViewFilter() {
   const propertyId = searchParams.get("property") || ""
 
   const [managersWithProperties, setManagersWithProperties] = useState<ManagerWithProperties[]>([])
+  const [unassignedProperties, setUnassignedProperties] = useState<PropertyOption[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -28,6 +29,14 @@ export function AdminViewFilter() {
         if (!res.ok) return
         const json = await res.json()
         const data = json.data || []
+        const unassigned = (json.unassignedProperties || []).map(
+          (p: { id: string; address: string | null; city: string | null; state: string | null; zip_code: string | null }) => ({
+            id: p.id,
+            address: p.address,
+            label: [p.address, [p.city, p.state, p.zip_code].filter(Boolean).join(", ")].filter(Boolean).join(", ") || p.id,
+          })
+        )
+        setUnassignedProperties(unassigned)
         setManagersWithProperties(
           data.map((m: { id: string; name: string | null; email: string; properties?: Array<{ id: string; address: string | null; city: string | null; state: string | null; zip_code: string | null }> }) => {
             const propsList: PropertyOption[] = (m.properties || []).map((p: { id: string; address: string | null; city: string | null; state: string | null; zip_code: string | null }) => ({
@@ -62,12 +71,13 @@ export function AdminViewFilter() {
   )
 
   const propertiesForDropdown = useMemo(() => {
-    if (managerId) {
-      const manager = managersWithProperties.find((m) => m.id === managerId)
-      return manager ? manager.properties : []
-    }
-    return managersWithProperties.flatMap((m) => m.properties)
-  }, [managersWithProperties, managerId])
+    const assigned =
+      managerId
+        ? (managersWithProperties.find((m) => m.id === managerId)?.properties ?? [])
+        : managersWithProperties.flatMap((m) => m.properties)
+    const unassigned = managerId ? [] : unassignedProperties
+    return [...assigned, ...unassigned]
+  }, [managersWithProperties, managerId, unassignedProperties])
 
   const effectivePropertyId = useMemo(() => {
     if (!propertyId) return ""
@@ -130,7 +140,7 @@ export function AdminViewFilter() {
       </div>
       <div className="flex items-center gap-2">
         <Label htmlFor="admin-filter-property" className="text-xs text-muted-foreground whitespace-nowrap">
-          Property
+          Filter by property
         </Label>
         <Select
           value={effectivePropertyId || "all"}

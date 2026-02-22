@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server"
 /**
  * PATCH /api/admin/properties/[propertyId]/manager
  * Body: { managerId: string | null }
- * Sets properties.manager_id for the given property. Admin-only.
+ * Sets properties.manager_id for the given property.
+ * Admin: can assign any manager (or unassign). Property Manager: can only assign themselves.
  */
 export async function PATCH(
   request: NextRequest,
@@ -42,8 +43,17 @@ export async function PATCH(
       .select("role")
       .eq("id", user.id)
       .single()
-    if (profile?.role !== "admin") {
+    const role = profile?.role
+    if (role !== "admin" && role !== "manager") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+    }
+    if (role === "manager") {
+      if (managerId !== null && managerId !== user.id) {
+        return NextResponse.json(
+          { error: "Property Managers can only assign properties to themselves" },
+          { status: 403 }
+        )
+      }
     }
 
     if (managerId) {
@@ -69,7 +79,7 @@ export async function PATCH(
       .single()
 
     if (error) {
-      console.error("Error updating property manager:", error)
+      console.error("Error updating Property Manager:", error)
       return NextResponse.json(
         { error: "Failed to update property", details: error.message },
         { status: 500 }
@@ -81,7 +91,7 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, data })
   } catch (error) {
-    console.error("Error in PATCH property manager:", error)
+    console.error("Error in PATCH Property Manager:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }

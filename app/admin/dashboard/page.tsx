@@ -253,7 +253,7 @@ export default function AdminDashboardPage() {
                 <Link href={adminPathWithFilter(`${BASE}/payments`, linkParams)}>Payments</Link>
               </Button>
               <Button variant="outline" asChild>
-                <Link href={adminPathWithFilter(`${BASE}/property-managers`, linkParams)}>Property managers</Link>
+                <Link href={adminPathWithFilter(`${BASE}/property-managers`, linkParams)}>Property Managers</Link>
               </Button>
             </div>
           </CardContent>

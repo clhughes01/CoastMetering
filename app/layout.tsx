@@ -4,7 +4,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: 'Coast Metering - Submetering & Utility Services',
-  description: 'Professional water submetering and utility billing platform for property managers and tenants',
+  description: 'Professional water submetering and utility billing platform for Property Managers and tenants',
   icons: {
     icon: [
       {
