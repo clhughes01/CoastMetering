@@ -15,7 +15,8 @@ import {
   LayoutDashboard,
   Scan,
   Building2,
-  UserPlus
+  UserPlus,
+  Home
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -34,6 +35,7 @@ const navigation = [
       { name: "Properties", href: "/manager/properties", icon: Building2 },
       { name: "Assign properties", href: "/manager/assign-properties", icon: UserPlus },
       { name: "Tenants", href: "/manager/customers", icon: Users },
+      { name: "Landlords", href: "/manager/landlords", icon: Home },
     ]
   },
   {

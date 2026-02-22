@@ -32,6 +32,7 @@ export default function SettingsPage() {
   const [confirmPassword, setConfirmPassword] = useState("")
 
   // Invite code state
+  const [inviteRole, setInviteRole] = useState<"tenant" | "landlord">("tenant")
   const [generatingCode, setGeneratingCode] = useState(false)
   const [generatedCode, setGeneratedCode] = useState<string | null>(null)
   const [inviteError, setInviteError] = useState("")
@@ -154,7 +155,7 @@ export default function SettingsPage() {
       const res = await fetch("/api/invite-codes/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: "tenant" }),
+        body: JSON.stringify({ role: inviteRole }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -339,9 +340,9 @@ export default function SettingsPage() {
           <TabsContent value="invite">
             <Card>
               <CardHeader>
-                <CardTitle>Tenant invite code</CardTitle>
+                <CardTitle>Invite code</CardTitle>
                 <CardDescription>
-                  Generate a one-time code for a new tenant to sign up. The code expires in 24 hours.
+                  Generate a one-time code for a new tenant or landlord to sign up. The code expires in 24 hours.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -355,7 +356,19 @@ export default function SettingsPage() {
                     {success}
                   </div>
                 )}
-                <Button onClick={handleGenerateInviteCode} disabled={generatingCode}>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-2">
+                    <Label>Account type</Label>
+                    <select
+                      value={inviteRole}
+                      onChange={(e) => setInviteRole(e.target.value as "tenant" | "landlord")}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 max-w-[200px]"
+                    >
+                      <option value="tenant">Tenant</option>
+                      <option value="landlord">Landlord</option>
+                    </select>
+                  </div>
+                  <Button onClick={handleGenerateInviteCode} disabled={generatingCode}>
                   {generatingCode ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -364,13 +377,14 @@ export default function SettingsPage() {
                   ) : (
                     <>
                       <KeyRound className="h-4 w-4 mr-2" />
-                      Generate tenant code
+                      Generate code
                     </>
                   )}
                 </Button>
+                </div>
                 {generatedCode && (
                   <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
-                    <p className="text-sm text-muted-foreground">Share this code with the tenant:</p>
+                    <p className="text-sm text-muted-foreground">Share this code with the {inviteRole}:</p>
                     <div className="flex items-center gap-2">
                       <code className="text-xl font-mono font-semibold tracking-wider bg-background px-3 py-2 rounded border">
                         {generatedCode}

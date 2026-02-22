@@ -6,7 +6,7 @@ import { createSupabaseAdminClient, createSupabaseClientFromCookies } from '@/li
  * Manager: can only create units on their properties or unassigned properties.
  */
 export async function POST(request: NextRequest) {
-  try {
+  const run = async () => {
     const supabaseAuth = await createSupabaseClientFromCookies()
     const { data: { user }, error: authError } = await supabaseAuth.auth.getUser()
     if (authError || !user) {
@@ -25,7 +25,6 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
 
-    // Validate required fields
     if (!body.property_id || !body.unit_number) {
       return NextResponse.json(
         { error: 'Missing required fields: property_id, unit_number' },
@@ -33,7 +32,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check if property exists and caller can access it
     const { data: property, error: propertyError } = await supabase
       .from('properties')
       .select('id, manager_id')
@@ -51,8 +49,8 @@ export async function POST(request: NextRequest) {
         { error: 'You can only add units to your own properties or unassigned properties' },
         { status: 403 }
       )
+    }
 
-    // Check if unit number already exists for this property
     const { data: existingUnit } = await supabase
       .from('units')
       .select('id')
@@ -67,7 +65,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Insert unit
     const { data, error } = await supabase
       .from('units')
       .insert({
@@ -80,26 +77,24 @@ export async function POST(request: NextRequest) {
     if (error) {
       console.error('Supabase error:', error)
       return NextResponse.json(
-        { 
-          error: 'Failed to create unit',
-          details: error.message 
-        },
+        { error: 'Failed to create unit', details: error.message },
         { status: 500 }
       )
     }
 
-    return NextResponse.json({
-      success: true,
-      data,
-    })
-  } catch (error) {
-    console.error('Error creating unit:', error)
+    return NextResponse.json({ success: true, data })
+  }
+
+  const caught = (err: unknown) => {
+    console.error('Error creating unit:', err)
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to create unit',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: err instanceof Error ? err.message : 'Unknown error',
       },
       { status: 500 }
     )
   }
+
+  return run().catch(caught)
 }

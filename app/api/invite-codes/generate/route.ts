@@ -38,11 +38,17 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json().catch(() => ({}))
-    const role = body.role === "manager" ? "manager" : "tenant"
+    const requestedRole = body.role
+    const role =
+      requestedRole === "manager"
+        ? "manager"
+        : requestedRole === "landlord"
+          ? "landlord"
+          : "tenant"
 
-    if (profile.role === "manager" && role !== "tenant") {
+    if (profile.role === "manager" && role !== "tenant" && role !== "landlord") {
       return NextResponse.json(
-        { error: "Property Managers can only generate tenant invite codes." },
+        { error: "Property Managers can only generate tenant or landlord invite codes." },
         { status: 403 }
       )
     }

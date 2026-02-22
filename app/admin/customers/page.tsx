@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Download, Plus, Users, UserRoundCog } from "lucide-react"
-import { getCustomers } from "@/lib/data"
 import { createSupabaseClient } from "@/lib/supabase/client"
 import type { Customer } from "@/lib/types"
 import {
@@ -87,14 +86,16 @@ export default function AdminCustomersPage() {
   const loadCustomers = async () => {
     try {
       setLoading(true)
-      const [customers, propsRes] = await Promise.all([
-        getCustomers(),
+      const [tenantsRes, propsRes] = await Promise.all([
+        fetch("/api/tenants/list"),
         createSupabaseClient().from("properties").select("id, manager_id"),
       ])
-      setData(customers)
+      const tenantsJson = tenantsRes.ok ? await tenantsRes.json() : { data: [] }
+      setData(tenantsJson.data ?? [])
       setProperties(propsRes.data || [])
     } catch (error) {
       console.error("Error loading customers:", error)
+      setData([])
     } finally {
       setLoading(false)
     }

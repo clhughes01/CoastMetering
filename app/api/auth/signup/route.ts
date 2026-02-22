@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Check your email for an invite link. Click it to create your account and set your password.",
+      message: "Check your email for an invite link (the email will be from Supabase). Click the link to create your account and set your password. If you don't see it, check your spam or junk folder.",
     })
   } catch (e) {
     console.error("Signup error:", e)

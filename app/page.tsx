@@ -33,6 +33,7 @@ function LoginPageContent() {
       if (user) {
         if (user.role === "admin") router.replace("/admin/dashboard")
         else if (user.role === "manager") router.replace("/manager/dashboard")
+        else if (user.role === "landlord") router.replace("/landlord/dashboard")
         else router.replace("/tenant/tenant.new/dashboard")
       } else if (searchParams.get("confirmed") === "1") {
         setSuccess("Email confirmed! You can sign in below.")
@@ -63,6 +64,8 @@ function LoginPageContent() {
           router.push("/admin/dashboard")
         } else if (user.role === "manager") {
           router.push("/manager/dashboard")
+        } else if (user.role === "landlord") {
+          router.push("/landlord/dashboard")
         } else {
           router.push("/tenant/tenant.new/dashboard")
         }
@@ -113,7 +116,7 @@ function LoginPageContent() {
       }
 
       setSuccess(
-        data.message || "Check your email for an invite link. Click it to create your account and set your password."
+        data.message || "Check your email for an invite link (the email will be from Supabase). Click the link to create your account and set your password. If you don't see it, check your spam or junk folder."
       )
       setActiveTab("login")
       setSignupEmail("")
@@ -267,6 +270,9 @@ function LoginPageContent() {
                       />
                       <p className="text-xs text-muted-foreground">
                         Get an invite code from your Property Manager or admin to create an account.
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        The confirmation email will be sent by Supabase; check your spam folder if you don’t see it.
                       </p>
                     </div>
 

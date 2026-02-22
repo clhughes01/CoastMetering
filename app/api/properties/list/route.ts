@@ -28,6 +28,9 @@ export async function GET(request: NextRequest) {
     if (role === 'manager') {
       query = query.or(`manager_id.eq.${user.id},manager_id.is.null`)
     }
+    if (role === 'landlord') {
+      query = query.eq('landlord_id', user.id)
+    }
     // admin or other: no filter (admin sees all; unauthenticated already 401)
 
     const { data, error } = await query

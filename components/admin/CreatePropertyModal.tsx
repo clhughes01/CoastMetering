@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 
 export type ManagerOption = { id: string; name: string | null; email: string }
+export type LandlordOption = { id: string; name: string | null; email: string }
 
 interface CreatePropertyModalProps {
   isOpen: boolean
@@ -24,6 +25,10 @@ interface CreatePropertyModalProps {
   requireManagerAssignment?: boolean
   /** List of Property Managers for the dropdown. Required when requireManagerAssignment is true. */
   managers?: ManagerOption[]
+  /** When true, show required Landlord dropdown (manager flow). */
+  requireLandlordAssignment?: boolean
+  /** List of Landlords for the dropdown. Required when requireLandlordAssignment is true. */
+  landlords?: LandlordOption[]
 }
 
 export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
@@ -32,10 +37,13 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
   onSuccess,
   requireManagerAssignment = false,
   managers = [],
+  requireLandlordAssignment = false,
+  landlords = [],
 }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedManagerId, setSelectedManagerId] = useState<string>('')
+  const [selectedLandlordId, setSelectedLandlordId] = useState<string>('')
   const [units, setUnits] = useState<string[]>([''])
   const [formData, setFormData] = useState({
     address: '',
@@ -82,10 +90,19 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
       return
     }
 
+    if (requireLandlordAssignment && !selectedLandlordId) {
+      setError('Please select a Landlord')
+      setLoading(false)
+      return
+    }
+
     try {
       const createBody: Record<string, unknown> = { ...formData }
       if (requireManagerAssignment && selectedManagerId) {
         createBody.manager_id = selectedManagerId
+      }
+      if (requireLandlordAssignment && selectedLandlordId) {
+        createBody.landlord_id = selectedLandlordId
       }
       // First, create the property
       const propertyResponse = await fetch('/api/properties/create', {
@@ -142,6 +159,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
       })
       setUnits([''])
       setSelectedManagerId('')
+      setSelectedLandlordId('')
 
       onSuccess()
       onClose()
@@ -269,6 +287,30 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                   <option key={m.id} value={m.id}>
                     {m.name || m.email}
                     {m.email !== (m.name || '') ? ` (${m.email})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {requireLandlordAssignment && landlords.length > 0 && (
+            <div>
+              <Label htmlFor="landlord_id">
+                Landlord <span className="text-destructive">*</span>
+              </Label>
+              <select
+                id="landlord_id"
+                required
+                value={selectedLandlordId}
+                onChange={(e) => setSelectedLandlordId(e.target.value)}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={loading}
+              >
+                <option value="">Select Landlord</option>
+                {landlords.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name || l.email}
+                    {l.email !== (l.name || '') ? ` (${l.email})` : ''}
                   </option>
                 ))}
               </select>

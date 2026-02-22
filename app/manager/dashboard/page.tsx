@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Users, FileText, DollarSign, TrendingUp, Droplets, Building } from "lucide-react"
 import Link from "next/link"
-import { getCustomers, getStatements, getPayments } from "@/lib/data"
+import { getStatements, getPayments } from "@/lib/data"
 import { createSupabaseClient } from "@/lib/supabase/client"
 
 export default function DashboardPage() {
@@ -23,12 +23,13 @@ export default function DashboardPage() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [customersData, statementsData, paymentsData] = await Promise.all([
-        getCustomers(),
+      const [tenantsRes, statementsData, paymentsData] = await Promise.all([
+        fetch("/api/tenants/list"),
         getStatements(),
         getPayments(),
       ])
-      setCustomers(customersData)
+      const tenantsJson = tenantsRes.ok ? await tenantsRes.json() : { data: [] }
+      setCustomers(tenantsJson.data ?? [])
       setStatements(statementsData)
       setPayments(paymentsData)
       // Load properties count from Supabase when available

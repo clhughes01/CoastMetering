@@ -3,66 +3,51 @@
 import Link from "next/link"
 import { usePathname, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { adminPathWithFilter } from "@/lib/admin-filter"
 import {
   Users,
   FileText,
   BarChart3,
   Receipt,
   CreditCard,
-  Settings,
   ChevronLeft,
   Menu,
   LayoutDashboard,
-  Scan,
   Building2,
-  UserCog,
-  Home,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
 import { Logo, LogoIcon } from "@/components/logo"
 
+const BASE = "/landlord"
+
+function landlordPathWithFilter(path: string, params: { property: string | null }) {
+  const sp = new URLSearchParams()
+  if (params.property) sp.set("property", params.property)
+  const q = sp.toString()
+  return path + (q ? `?${q}` : "")
+}
+
 const navigation = [
+  { title: "OVERVIEW", items: [{ name: "Dashboard", path: `${BASE}/dashboard`, icon: LayoutDashboard }] },
   {
-    title: "OVERVIEW",
+    title: "VIEW",
     items: [
-      { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-    ],
-  },
-  {
-    title: "MANAGE",
-    items: [
-      { name: "Properties", href: "/admin/properties", icon: Building2 },
-      { name: "Tenants", href: "/admin/customers", icon: Users },
-      { name: "Property Managers", href: "/admin/property-managers", icon: UserCog },
-      { name: "Landlords", href: "/admin/landlords", icon: Home },
+      { name: "Properties", path: `${BASE}/properties`, icon: Building2 },
+      { name: "Tenants", path: `${BASE}/tenants`, icon: Users },
     ],
   },
   {
     title: "STATEMENTS & USAGE",
     items: [
-      { name: "Statements", href: "/admin/statements", icon: FileText },
-      { name: "Consumption", href: "/admin/consumption", icon: BarChart3 },
+      { name: "Statements", path: `${BASE}/statements`, icon: FileText },
+      { name: "Consumption", path: `${BASE}/consumption`, icon: BarChart3 },
     ],
   },
   {
-    title: "UTILITY BILLS",
+    title: "BILLS & PAYMENTS",
     items: [
-      { name: "Utility Bills", href: "/admin/utility-bills", icon: Receipt },
-      { name: "Extract Bill (Textract)", href: "/admin/textract-test", icon: Scan },
-    ],
-  },
-  {
-    title: "PAYMENTS",
-    items: [
-      { name: "Payments", href: "/admin/payments", icon: CreditCard },
-    ],
-  },
-  {
-    title: "SETTINGS",
-    items: [
-      { name: "Settings", href: "/admin/settings", icon: Settings },
+      { name: "Utility Bills", path: `${BASE}/utility-bills`, icon: Receipt },
+      { name: "Payments", path: `${BASE}/payments`, icon: CreditCard },
     ],
   },
 ]
@@ -74,14 +59,12 @@ interface SidebarProps {
 export function Sidebar({ className }: SidebarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const [collapsed, setCollapsed] = useState(false)
-  const manager = searchParams.get("manager") || undefined
   const property = searchParams.get("property") || undefined
-  const linkParams = { manager: manager ?? null, property: property ?? null }
+  const [collapsed, setCollapsed] = useState(false)
+  const linkParams = { property: property ?? null }
 
   return (
     <>
-      {/* Mobile overlay */}
       <div
         className={cn(
           "fixed inset-0 bg-black/50 z-40 lg:hidden",
@@ -89,8 +72,6 @@ export function Sidebar({ className }: SidebarProps) {
         )}
         onClick={() => setCollapsed(true)}
       />
-
-      {/* Mobile toggle button */}
       <Button
         variant="ghost"
         size="icon"
@@ -99,7 +80,6 @@ export function Sidebar({ className }: SidebarProps) {
       >
         <Menu className="h-5 w-5" />
       </Button>
-
       <aside
         className={cn(
           "fixed left-0 top-0 z-40 h-screen bg-sidebar text-sidebar-foreground transition-all duration-300",
@@ -110,7 +90,7 @@ export function Sidebar({ className }: SidebarProps) {
         <div className="flex flex-col h-full">
           <div className="flex items-center justify-between h-16 px-3 bg-card border-b border-border">
             <Link
-              href={adminPathWithFilter("/admin/dashboard", linkParams)}
+              href={landlordPathWithFilter(`${BASE}/dashboard`, linkParams)}
               className={cn(
                 "flex items-center min-w-0 rounded-lg transition-opacity hover:opacity-90",
                 collapsed ? "justify-center w-10 h-10" : "gap-2 flex-1 py-1"
@@ -128,12 +108,9 @@ export function Sidebar({ className }: SidebarProps) {
               className="hidden lg:flex text-muted-foreground hover:bg-muted"
               onClick={() => setCollapsed(!collapsed)}
             >
-              <ChevronLeft
-                className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")}
-              />
+              <ChevronLeft className={cn("h-4 w-4 transition-transform", collapsed && "rotate-180")} />
             </Button>
           </div>
-
           <nav className="flex-1 overflow-y-auto py-4 px-3">
             {navigation.map((section) => (
               <div key={section.title} className="mb-6">
@@ -144,8 +121,8 @@ export function Sidebar({ className }: SidebarProps) {
                 )}
                 <ul className="space-y-1">
                   {section.items.map((item) => {
-                    const href = adminPathWithFilter(item.href, linkParams)
-                    const isActive = pathname === item.href
+                    const href = landlordPathWithFilter(item.path, linkParams)
+                    const isActive = pathname === item.path || pathname.startsWith(item.path + "?")
                     return (
                       <li key={item.name}>
                         <Link

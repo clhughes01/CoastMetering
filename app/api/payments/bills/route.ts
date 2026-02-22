@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
       .eq("id", user.id)
       .single()
 
-    if (!profile || (profile.role !== "admin" && profile.role !== "manager")) {
+    if (!profile || (profile.role !== "admin" && profile.role !== "manager" && profile.role !== "landlord")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
@@ -41,6 +41,17 @@ export async function GET(request: NextRequest) {
         .select("id")
         .or(`manager_id.eq.${user.id},manager_id.is.null`)
       const ids = (managerPropertyIds || []).map((p) => p.id)
+      if (ids.length === 0) {
+        query = query.eq("property_id", "00000000-0000-0000-0000-000000000000")
+      } else {
+        query = query.in("property_id", ids)
+      }
+    } else if (profile.role === "landlord") {
+      const { data: landlordPropertyIds } = await admin
+        .from("properties")
+        .select("id")
+        .eq("landlord_id", user.id)
+      const ids = (landlordPropertyIds || []).map((p) => p.id)
       if (ids.length === 0) {
         query = query.eq("property_id", "00000000-0000-0000-0000-000000000000")
       } else {
@@ -162,7 +173,7 @@ export async function POST(request: NextRequest) {
       .eq("id", user.id)
       .single()
 
-    if (!profile || (profile.role !== "admin" && profile.role !== "manager")) {
+    if (!profile || (profile.role !== "admin" && profile.role !== "manager" && profile.role !== "landlord")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 

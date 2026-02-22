@@ -163,12 +163,10 @@ export async function signIn(email: string, password: string): Promise<{ user: U
       return { user: null, error: 'Invalid credentials' }
     }
 
-    // Get user profile to determine role - CRITICAL: Must fetch from database
-    // Use API route with admin client to bypass RLS and get the actual role
+    // Get user profile to determine role (API creates profile if missing)
     let profile = null
-    
+
     try {
-      // Call API route to fetch profile (uses admin client server-side)
       const response = await fetch('/api/auth/get-profile', {
         method: 'POST',
         headers: {
@@ -181,45 +179,19 @@ export async function signIn(email: string, password: string): Promise<{ user: U
         const { profile: profileData } = await response.json()
         profile = profileData
       } else {
-        // Profile doesn't exist, create it with default role
-        const role = email.includes('@coastmetering.com') || email.includes('@coastmgmt.') 
-          ? 'manager' 
+        // API couldn't find or create profile; use email-based role fallback
+        const fallbackRole = email.includes('@coastmetering.com') || email.includes('@coastmgmt.')
+          ? 'manager'
           : 'tenant'
-
-        // Create profile using regular client (RLS allows public insert)
-        const { data: newProfile, error: insertError } = await supabase
-          .from('user_profiles')
-          .upsert({
-            id: data.user.id,
-            email: data.user.email!,
-            role: role,
-            name: data.user.user_metadata?.name || '',
-          }, {
-            onConflict: 'id'
-          })
-          .select()
-          .single()
-
-        if (newProfile) {
-          profile = newProfile
-        } else if (insertError) {
-          console.error('Failed to create profile:', insertError)
-          // Fallback to email-based role
-          const fallbackRole = email.includes('@coastmetering.com') || email.includes('@coastmgmt.') 
-            ? 'manager' 
-            : 'tenant'
-          
-          const fallbackUser: User = {
-            id: data.user.id,
-            email: data.user.email!,
-            role: fallbackRole as 'manager' | 'tenant',
-            name: data.user.user_metadata?.name || '',
-            createdAt: new Date(data.user.created_at),
-            updatedAt: new Date(),
-          }
-          
-          return { user: fallbackUser, error: null }
+        const fallbackUser: User = {
+          id: data.user.id,
+          email: data.user.email!,
+          role: fallbackRole as 'manager' | 'tenant',
+          name: data.user.user_metadata?.name || '',
+          createdAt: new Date(data.user.created_at),
+          updatedAt: new Date(),
         }
+        return { user: fallbackUser, error: null }
       }
     } catch (error: any) {
       console.error('Error fetching profile:', error)
@@ -315,14 +287,7 @@ export async function getCurrentUser(): Promise<User | null> {
 
       if (response.ok) {
         const { profile } = await response.json()
-        
         if (profile) {
-          console.log('Profile fetched successfully:', { 
-            id: profile.id, 
-            email: profile.email, 
-            name: profile.name,
-            role: profile.role 
-          })
           return {
             id: profile.id,
             email: profile.email,
@@ -334,20 +299,18 @@ export async function getCurrentUser(): Promise<User | null> {
             ...(profile.role === 'manager' || profile.role === 'admin' ? { companyName: profile.company_name } : { accountNumber: profile.account_number }),
           }
         }
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        console.error('API route returned error:', response.status, errorData)
       }
-    } catch (apiError) {
-      console.error('Error fetching profile via API:', apiError)
+      // API failed or no profile in response; fall through to fallback below
+    } catch {
+      // Fall through to fallback
     }
 
-    // Fallback: try to get profile directly (might fail due to RLS)
+    // Fallback: get profile directly (uses RLS; may return null)
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
     if (profile) {
       return {
@@ -362,11 +325,15 @@ export async function getCurrentUser(): Promise<User | null> {
       }
     }
 
-    // Last resort: return user with minimal info
+    // Last resort: infer role from email so managers aren't sent to tenant portal
+    const fallbackRole =
+      user.email?.includes('@coastmetering.com') || user.email?.includes('@coastmgmt.')
+        ? 'manager'
+        : 'tenant'
     return {
       id: user.id,
       email: user.email!,
-      role: 'tenant' as const, // Default to tenant if we can't determine
+      role: fallbackRole as User['role'],
       name: user.user_metadata?.name || '',
       createdAt: new Date(user.created_at),
       updatedAt: new Date(),

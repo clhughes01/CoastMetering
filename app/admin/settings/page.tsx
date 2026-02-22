@@ -37,7 +37,7 @@ export default function AdminSettingsPage() {
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
 
-  const [inviteRole, setInviteRole] = useState<"tenant" | "manager">("tenant")
+  const [inviteRole, setInviteRole] = useState<"tenant" | "manager" | "landlord">("tenant")
   const [generatingCode, setGeneratingCode] = useState(false)
   const [generatedCode, setGeneratedCode] = useState<string | null>(null)
   const [generatedExpiresAt, setGeneratedExpiresAt] = useState<string | null>(null)
@@ -333,7 +333,7 @@ export default function AdminSettingsPage() {
               <CardHeader>
                 <CardTitle>Invite codes</CardTitle>
                 <CardDescription>
-                  Generate a one-time code for new tenants or Property Managers. Codes expire in 24 hours.
+                  Generate a one-time code for new tenants, Property Managers, or Landlords. Codes expire in 24 hours.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -350,13 +350,14 @@ export default function AdminSettingsPage() {
                 <div className="flex flex-wrap items-end gap-4">
                   <div className="space-y-2">
                     <Label>Account type</Label>
-                    <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as "tenant" | "manager")}>
+                    <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as "tenant" | "manager" | "landlord")}>
                       <SelectTrigger className="w-[200px]">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="tenant">Tenant</SelectItem>
                         <SelectItem value="manager">Property Manager</SelectItem>
+                        <SelectItem value="landlord">Landlord</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

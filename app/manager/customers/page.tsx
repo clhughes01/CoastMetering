@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Download, Plus, Users, UserRoundCog } from "lucide-react"
-import { getCustomers } from "@/lib/data"
 import type { Customer } from "@/lib/types"
 import { CreatePropertyModal, CreateUnitModal, CreateTenantModal, CreateMeterModal, EditTenantModal, ChangeTenantModal } from "@/components/admin"
 
@@ -68,10 +67,16 @@ export default function CustomersPage() {
   const loadCustomers = async () => {
     try {
       setLoading(true)
-      const customers = await getCustomers()
-      setData(customers)
+      const res = await fetch("/api/tenants/list")
+      if (!res.ok) {
+        setData([])
+        return
+      }
+      const json = await res.json()
+      setData(json.data ?? [])
     } catch (error) {
       console.error("Error loading customers:", error)
+      setData([])
     } finally {
       setLoading(false)
     }

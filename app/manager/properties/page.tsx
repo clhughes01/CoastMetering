@@ -25,6 +25,7 @@ export default function PropertiesPage() {
   const [properties, setProperties] = useState<Property[]>([])
   const [loading, setLoading] = useState(true)
   const [isCreatePropertyModalOpen, setIsCreatePropertyModalOpen] = useState(false)
+  const [createModalLandlords, setCreateModalLandlords] = useState<{ id: string; name: string | null; email: string }[]>([])
   const [isEditPropertyModalOpen, setIsEditPropertyModalOpen] = useState(false)
   const [isCreateUnitModalOpen, setIsCreateUnitModalOpen] = useState(false)
   const [isCreateTenantModalOpen, setIsCreateTenantModalOpen] = useState(false)
@@ -34,6 +35,15 @@ export default function PropertiesPage() {
   useEffect(() => {
     loadProperties()
   }, [])
+
+  useEffect(() => {
+    if (isCreatePropertyModalOpen && createModalLandlords.length === 0) {
+      fetch("/api/admin/landlords")
+        .then((res) => res.ok ? res.json() : { data: [] })
+        .then((json) => setCreateModalLandlords(json.data ?? []))
+        .catch(() => setCreateModalLandlords([]))
+    }
+  }, [isCreatePropertyModalOpen, createModalLandlords.length])
 
   const loadProperties = async () => {
     try {
@@ -216,6 +226,8 @@ export default function PropertiesPage() {
             loadProperties()
             setIsCreatePropertyModalOpen(false)
           }}
+          requireLandlordAssignment={true}
+          landlords={createModalLandlords}
         />
         <EditPropertyModal
           isOpen={isEditPropertyModalOpen}
