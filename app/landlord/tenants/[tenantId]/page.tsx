@@ -77,7 +77,41 @@ export default function LandlordTenantDetailPage() {
           .eq("id", tenantId)
           .single()
         if (e) throw e
-        setTenant(data as TenantDetail)
+        if (!data) throw new Error("No data")
+        const raw = data as Record<string, unknown>
+        const unitsRaw = raw.units
+        const u = Array.isArray(unitsRaw) ? unitsRaw[0] : unitsRaw
+        const uObj = u as Record<string, unknown> | null | undefined
+        const propRaw = uObj?.properties
+        const prop = Array.isArray(propRaw) ? propRaw[0] : propRaw
+        const pObj = prop as Record<string, unknown> | null | undefined
+        const normalized: TenantDetail = {
+          id: raw.id as string,
+          name: raw.name as string,
+          email: (raw.email as string | null) ?? null,
+          phone: (raw.phone as string | null) ?? null,
+          move_in_date: raw.move_in_date as string,
+          move_out_date: (raw.move_out_date as string | null) ?? null,
+          account_number: (raw.account_number as string | null) ?? null,
+          unit_id: raw.unit_id as string,
+          units: uObj
+            ? {
+                id: uObj.id as string,
+                unit_number: uObj.unit_number as string,
+                property_id: uObj.property_id as string,
+                properties: pObj
+                  ? {
+                      id: pObj.id as string,
+                      address: (pObj.address as string | null) ?? null,
+                      city: (pObj.city as string | null) ?? null,
+                      state: (pObj.state as string | null) ?? null,
+                      zip_code: (pObj.zip_code as string | null) ?? null,
+                    }
+                  : null,
+              }
+            : null,
+        }
+        setTenant(normalized)
       } catch (err) {
         setError("Tenant not found or you don't have access.")
         setTenant(null)
