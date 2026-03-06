@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Building2 } from "lucide-react"
@@ -105,7 +106,12 @@ export default function LandlordPropertiesPage() {
                     key={p.id}
                     className="flex flex-wrap items-center gap-4 py-3 border-b border-border last:border-0"
                   >
-                    <span className="font-medium">{formatAddress(p)}</span>
+                    <Link
+                      href={`${BASE}/properties/${p.id}`}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {formatAddress(p)}
+                    </Link>
                     <span className="text-sm text-muted-foreground">
                       {p.units_count ?? 0} unit(s) · {p.tenants_count ?? 0} tenant(s)
                     </span>

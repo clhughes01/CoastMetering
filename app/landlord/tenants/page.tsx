@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users } from "lucide-react"
@@ -105,7 +106,14 @@ export default function LandlordTenantsPage() {
                   <tbody>
                     {filtered.map((t) => (
                       <tr key={t.id} className="border-b">
-                        <td className="py-2">{t.name}</td>
+                        <td className="py-2">
+                          <Link
+                            href={`${BASE}/tenants/${t.id}`}
+                            className="text-primary hover:underline font-medium"
+                          >
+                            {t.name}
+                          </Link>
+                        </td>
                         <td className="py-2 text-muted-foreground">{t.email ?? "—"}</td>
                         <td className="py-2">{t.unit_number}</td>
                         <td className="py-2 text-muted-foreground">{t.property_address}</td>
