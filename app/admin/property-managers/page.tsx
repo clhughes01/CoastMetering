@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -183,9 +184,12 @@ export default function AdminPropertyManagersPage() {
                     key={p.id}
                     className="flex flex-wrap items-center gap-2 py-2 border-b border-border last:border-0"
                   >
-                    <span className="text-sm text-foreground min-w-0 flex-1">
+                    <Link
+                      href={`${BASE}/properties/${p.id}`}
+                      className="text-sm text-primary hover:underline min-w-0 flex-1"
+                    >
                       {formatAddress(p)}
-                    </span>
+                    </Link>
                     <Select
                       value={assignSelection[p.id] ?? ""}
                       onValueChange={(v) =>
@@ -247,7 +251,12 @@ export default function AdminPropertyManagersPage() {
                 <Card key={manager.id}>
                   <CardHeader>
                     <CardTitle className="text-base flex items-center gap-2">
-                      {manager.name || manager.email}
+                      <Link
+                        href={`${BASE}/property-managers/${manager.id}`}
+                        className="text-primary hover:underline"
+                      >
+                        {manager.name || manager.email}
+                      </Link>
                       {manager.company_name && (
                         <span className="text-sm font-normal text-muted-foreground">
                           ({manager.company_name})
@@ -303,9 +312,12 @@ export default function AdminPropertyManagersPage() {
                             >
                               <div className="flex flex-wrap items-center gap-2">
                                 <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                <span className="text-foreground font-medium min-w-0 flex-1">
+                                <Link
+                                  href={`${BASE}/properties/${p.id}`}
+                                  className="text-primary hover:underline font-medium min-w-0 flex-1"
+                                >
                                   {formatAddress(p)}
-                                </span>
+                                </Link>
                                 <span className="text-xs text-muted-foreground">
                                   {totalUnits} unit{totalUnits !== 1 ? "s" : ""}, {activeTenants} active tenant{activeTenants !== 1 ? "s" : ""}
                                 </span>
@@ -373,7 +385,12 @@ export default function AdminPropertyManagersPage() {
                                               className="flex flex-wrap items-center gap-2 text-xs"
                                             >
                                               <Users className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                              <span className="text-foreground">{t.name}</span>
+                                              <Link
+                                                href={`${BASE}/customers/${t.id}`}
+                                                className="text-primary hover:underline text-foreground"
+                                              >
+                                                {t.name}
+                                              </Link>
                                               {t.email && (
                                                 <span className="text-muted-foreground truncate max-w-[180px]">
                                                   {t.email}

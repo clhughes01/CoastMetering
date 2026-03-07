@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -156,9 +157,12 @@ export default function ManagerLandlordsPage() {
                     key={p.id}
                     className="flex flex-wrap items-center gap-2 py-2 border-b border-border last:border-0"
                   >
-                    <span className="text-sm text-foreground min-w-0 flex-1">
+                    <Link
+                      href={`${BASE}/properties/${p.id}`}
+                      className="text-sm text-primary hover:underline min-w-0 flex-1"
+                    >
                       {formatAddress(p)}
-                    </span>
+                    </Link>
                     <Select
                       value={assignSelection[p.id] ?? ""}
                       onValueChange={(v) =>
@@ -217,7 +221,12 @@ export default function ManagerLandlordsPage() {
                 <Card key={landlord.id}>
                   <CardHeader>
                     <CardTitle className="text-base flex items-center gap-2">
-                      {landlord.name || landlord.email}
+                      <Link
+                        href={`${BASE}/landlords/${landlord.id}`}
+                        className="text-primary hover:underline"
+                      >
+                        {landlord.name || landlord.email}
+                      </Link>
                     </CardTitle>
                     <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                       <span className="flex items-center gap-1">
@@ -243,7 +252,12 @@ export default function ManagerLandlordsPage() {
                         {landlord.properties.map((p) => (
                           <li key={p.id} className="flex items-center gap-2 text-sm flex-wrap">
                             <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <span className="min-w-0">{formatAddress(p)}</span>
+                            <Link
+                              href={`${BASE}/properties/${p.id}`}
+                              className="text-primary hover:underline min-w-0"
+                            >
+                              {formatAddress(p)}
+                            </Link>
                             {p.units && p.units.length > 0 && (
                               <span className="text-muted-foreground">
                                 · {p.units.length} unit{p.units.length !== 1 ? "s" : ""}

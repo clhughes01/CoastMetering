@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { DataTable } from "@/components/manager/data-table"
 import { Button } from "@/components/ui/button"
@@ -20,11 +21,25 @@ import {
 
 const BASE = "/admin"
 
-function getColumns(onChangeTenant: (customer: Customer) => void) {
+function getColumns(basePath: string, onChangeTenant: (customer: Customer) => void) {
   return [
     { key: "id", header: "ID" },
     { key: "accountNumber", header: "Account Number" },
-    { key: "residentName", header: "Resident Name" },
+    {
+      key: "residentName",
+      header: "Resident Name",
+      render: (item: Customer) =>
+        item.tenantId ? (
+          <Link
+            href={`${basePath}/customers/${item.tenantId}`}
+            className="text-primary hover:underline"
+          >
+            {item.residentName}
+          </Link>
+        ) : (
+          item.residentName
+        ),
+    },
     { key: "unit", header: "Unit" },
     { key: "streetAddress", header: "Street Address" },
     { key: "city", header: "City" },
@@ -166,7 +181,7 @@ export default function AdminCustomersPage() {
           <CardContent className="p-0">
             <DataTable
               data={filteredData}
-              columns={getColumns(openChangeTenant)}
+              columns={getColumns(BASE, openChangeTenant)}
               showPrint={true}
             />
           </CardContent>

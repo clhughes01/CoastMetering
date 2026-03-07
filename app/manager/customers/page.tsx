@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { DataTable } from "@/components/manager/data-table"
 import { Button } from "@/components/ui/button"
@@ -10,11 +11,25 @@ import { Download, Plus, Users, UserRoundCog } from "lucide-react"
 import type { Customer } from "@/lib/types"
 import { CreatePropertyModal, CreateUnitModal, CreateTenantModal, CreateMeterModal, EditTenantModal, ChangeTenantModal } from "@/components/admin"
 
-function getColumns(onChangeTenant: (customer: Customer) => void) {
+function getColumns(basePath: string, onChangeTenant: (customer: Customer) => void) {
   return [
     { key: "id", header: "ID" },
     { key: "accountNumber", header: "Account Number" },
-    { key: "residentName", header: "Resident Name" },
+    {
+      key: "residentName",
+      header: "Resident Name",
+      render: (item: Customer) =>
+        item.tenantId ? (
+          <Link
+            href={`${basePath}/customers/${item.tenantId}`}
+            className="text-primary hover:underline"
+          >
+            {item.residentName}
+          </Link>
+        ) : (
+          item.residentName
+        ),
+    },
     { key: "unit", header: "Unit" },
     { key: "streetAddress", header: "Street Address" },
     { key: "city", header: "City" },
@@ -87,6 +102,7 @@ export default function CustomersPage() {
       <Header 
         title="Tenants" 
         breadcrumbs={[{ label: "Tenants" }]} 
+        basePath="/manager"
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -135,7 +151,7 @@ export default function CustomersPage() {
           <CardContent className="p-0">
             <DataTable
               data={data}
-              columns={getColumns(openChangeTenant)}
+              columns={getColumns("/manager", openChangeTenant)}
               showPrint={true}
             />
           </CardContent>

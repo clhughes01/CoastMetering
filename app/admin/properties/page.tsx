@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import { useSearchParams } from "next/navigation"
+import Link from "next/link"
 import { Header } from "@/components/manager/header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -199,7 +200,16 @@ export default function AdminPropertiesPage() {
                               key={col.key}
                               className="px-4 py-3 text-sm text-foreground"
                             >
-                              {property[col.key as keyof typeof property] || "N/A"}
+                              {col.key === "address" ? (
+                                <Link
+                                  href={`${BASE}/properties/${property.id}`}
+                                  className="text-primary hover:underline"
+                                >
+                                  {property[col.key as keyof typeof property] || "N/A"}
+                                </Link>
+                              ) : (
+                                property[col.key as keyof typeof property] || "N/A"
+                              )}
                             </td>
                           ))}
                           <td className="px-4 py-3">

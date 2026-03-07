@@ -120,6 +120,7 @@ export default function PropertiesPage() {
       <Header 
         title="Properties" 
         breadcrumbs={[{ label: "Properties" }]} 
+        basePath="/manager"
       />
       
       <main className="flex-1 p-4 md:p-6 space-y-6">
@@ -180,7 +181,16 @@ export default function PropertiesPage() {
                         <tr key={property.id} className="border-b border-border hover:bg-muted/30">
                           {columns.map((col) => (
                             <td key={col.key} className="px-4 py-3 text-sm text-foreground">
-                              {property[col.key as keyof typeof property] || "N/A"}
+                              {col.key === "address" ? (
+                                <Link
+                                  href={`/manager/properties/${property.id}`}
+                                  className="text-primary hover:underline"
+                                >
+                                  {property[col.key as keyof typeof property] || "N/A"}
+                                </Link>
+                              ) : (
+                                property[col.key as keyof typeof property] || "N/A"
+                              )}
                             </td>
                           ))}
                           <td className="px-4 py-3">
