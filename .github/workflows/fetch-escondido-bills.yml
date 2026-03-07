@@ -1,0 +1,23 @@
+# Runs the Escondido Water bill fetcher on a schedule. Fully autonomous once secrets are set.
+name: Fetch Escondido bills
+on:
+  schedule:
+    - cron: '0 8 * * *'   # Daily at 8 AM UTC
+  workflow_dispatch:      # Allow manual "Run workflow" from Actions tab
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm run fetch-escondido-bills
+        env:
+          ESCONDIDO_LOGIN_EMAIL: ${{ secrets.ESCONDIDO_LOGIN_EMAIL }}
+          ESCONDIDO_LOGIN_PASSWORD: ${{ secrets.ESCONDIDO_LOGIN_PASSWORD }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

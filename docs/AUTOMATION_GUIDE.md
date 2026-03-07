@@ -189,3 +189,4 @@ Key tables for automation:
 2. **Webhooks**: Receive notifications from property management systems
 3. **CSV Imports**: Bulk import properties/tenants from spreadsheets
 4. **Integration APIs**: Connect with other property management software
+5. **Escondido Water bills**: Automatically fetch new bills from the utility portal — see [ESCONDIDO_BILL_FETCH.md](./ESCONDIDO_BILL_FETCH.md)
