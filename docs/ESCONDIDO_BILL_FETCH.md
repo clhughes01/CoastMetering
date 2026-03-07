@@ -19,37 +19,61 @@ You should see tables **`property_utility_accounts`** and **`utility_provider_bi
 
 ---
 
-### Step 2: Get your Escondido account number and property ID
+### Step 2: Bulk map properties to Escondido accounts (one-time, no per-property SQL)
 
-- **Account number**: The account number for the Escondido water bill (on the bill or in the Invoice Cloud portal when you log in).
-- **Property ID**: The UUID of the property in your app.  
-  In Supabase: **Table Editor** → **properties** → copy the **id** (UUID) of the property that corresponds to this Escondido account.
+You can load **all** property → account mappings in one go using a CSV (or the API). No need to run a separate SQL insert for each property.
+
+**Option A – CSV import script (recommended for hundreds of properties)**
+
+1. Create a CSV file with one of these formats.
+
+   **By property ID** (if you have UUIDs from Supabase):
+
+   ```csv
+   property_id,account_number
+   a1b2c3d4-e5f6-7890-abcd-ef1234567890,12345678
+   b2c3d4e5-f6a7-8901-bcde-f12345678901,87654321
+   ```
+
+   **By address** (script looks up the property for you):
+
+   ```csv
+   address,city,state,zip_code,account_number
+   123 Main St,Escondido,CA,92025,12345678
+   456 Oak Ave,Escondido,CA,92025,87654321
+   ```
+
+   Use the same address/city/state/zip as in your **properties** table so the script can match.
+
+2. Set env (or use a `.env` that has Supabase keys):
+
+   ```bash
+   export NEXT_PUBLIC_SUPABASE_URL="https://xxxxx.supabase.co"
+   export SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
+   ```
+
+3. Run the import once:
+
+   ```bash
+   npm run import-utility-accounts -- path/to/your-file.csv
+   ```
+
+   You should see: `Imported N property → account mapping(s) for escondido_water.`
+
+**Option B – API (admin-only)**
+
+- POST to `/api/admin/property-utility-accounts/import` as an authenticated **admin**.
+- Body: **JSON** `{ "rows": [ { "property_id": "uuid", "account_number": "12345" }, ... ] }`  
+  or **CSV** with header row `property_id,account_number` and data rows.
+- Content-Type: `application/json` or `text/csv`.
+
+Useful if you want to wire this to an admin UI or another tool.
+
+**Single-property fallback:** If you only have one or two properties, you can still run one SQL insert per property (see “1. Database setup” later in this doc). For many properties, use the bulk import above.
 
 ---
 
-### Step 3: Map the property to the Escondido account
-
-In Supabase **SQL Editor**, run (replace the placeholders):
-
-```sql
-INSERT INTO property_utility_accounts (property_id, utility_key, account_number)
-VALUES
-  ('YOUR_PROPERTY_UUID_HERE', 'escondido_water', 'YOUR_ESCONDIDO_ACCOUNT_NUMBER_HERE');
-```
-
-Example:
-
-```sql
-INSERT INTO property_utility_accounts (property_id, utility_key, account_number)
-VALUES
-  ('a1b2c3d4-e5f6-7890-abcd-ef1234567890', 'escondido_water', '12345678');
-```
-
-Add one row per property that has its own Escondido account.
-
----
-
-### Step 4: Add GitHub Actions secrets
+### Step 3: Add GitHub Actions secrets
 
 The workflow file **`.github/workflows/fetch-escondido-bills.yml`** is already in the repo. You only need to add secrets so it can log in and write to Supabase.
 
@@ -68,7 +92,7 @@ The workflow file **`.github/workflows/fetch-escondido-bills.yml`** is already i
 
 ---
 
-### Step 5: Push the workflow and run it once
+### Step 4: Push the workflow and run it once
 
 1. Commit and push the branch that contains **`.github/workflows/fetch-escondido-bills.yml`** (it’s already in the repo).
 2. On GitHub go to **Actions** → **Fetch Escondido bills**.
@@ -77,7 +101,7 @@ The workflow file **`.github/workflows/fetch-escondido-bills.yml`** is already i
 
 ---
 
-### Step 6: Confirm it’s autonomous
+### Step 5: Confirm it’s autonomous
 
 - The workflow is scheduled to run **daily at 8:00 AM UTC** (see `cron: '0 8 * * *'` in the workflow).
 - You can change the schedule by editing `.github/workflows/fetch-escondido-bills.yml` and the `schedule` section.
@@ -127,13 +151,20 @@ This creates:
 - **`property_utility_accounts`** – Maps each property to its Escondido account number (`utility_key = 'escondido_water'`).
 - **`utility_provider_bills`** – One row per billing period per property: amount, due date, period, optional PDF link, etc.
 
-Add a row per property that has an Escondido account:
+Add a row per property that has an Escondido account (or use **bulk import** below so you don’t run one SQL per property):
 
 ```sql
 INSERT INTO property_utility_accounts (property_id, utility_key, account_number)
 VALUES
   ('your-property-uuid', 'escondido_water', '12345678');
 ```
+
+**Bulk import (recommended for many properties):** Use the CSV import script so you don’t run SQL for each property:
+
+- **Script:** `npm run import-utility-accounts -- path/to/file.csv`  
+  CSV format: either `property_id,account_number` or `address,city,state,zip_code,account_number` (script matches by address).
+- **API:** `POST /api/admin/property-utility-accounts/import` with JSON `{ rows: [ { property_id, account_number } ] }` or CSV body. Admin only.
+- See **Step 2** in “Step-by-step setup” above for full details.
 
 ## 2. Environment variables
 
