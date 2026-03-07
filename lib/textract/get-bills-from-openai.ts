@@ -88,6 +88,26 @@ function formatMoney(n: number): string {
   return "$" + n.toFixed(2)
 }
 
+/** Charges that are split equally among tenants (not by usage). Use exact bill names. */
+const EQUAL_SPLIT_PATTERNS = [
+  "monthly water service charge",
+  "monthly trash & recycling",
+  "monthly trash and recycling",
+  "trash & recycling",
+  "monthly wastewater service charge",
+  "wastewater service charge",
+]
+
+function normalizeDesc(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+/** True if this line should be split equally among tenants; false = split proportionally by submeter usage. */
+function isEqualSplitCharge(description: string): boolean {
+  const d = normalizeDesc(description)
+  return EQUAL_SPLIT_PATTERNS.some((p) => d.includes(p) || d === p)
+}
+
 const BILLS_JSON_SCHEMA = `{
   "bills": [
     {
@@ -200,12 +220,16 @@ async function getBillLineItemsViaOpenAI(
   const block = formatExtracted(extractedData)
   const prompt = `Below is data extracted from a utility bill (key-value pairs, tables, and/or raw text).
 
-Your task: List every charge line that appears on the bill. For example: "Water Service" $65.57, "Monthly Water Service Charge" $67.58, "Monthly Trash & Recycling" $65.74, "Monthly Wastewater Service Charge" $124.45, etc. Merge duplicate labels (e.g. two "Water Service" lines) by adding their amounts into one line.
+Your task: List every charge line that appears on the bill with its EXACT description and amount from the bill.
 
-Return a JSON object: { "lineItems": [ { "description": "Water Service", "amount": 91.12 }, { "description": "Monthly Water Service Charge", "amount": 67.58 }, ... ] }
-- "description" = exact or shortened charge name from the bill.
-- "amount" = numeric amount only (no $). Sum duplicate descriptions into one amount.
-- Include every charge line you can find. If you only see a total and no breakdown, return one line: { "description": "Current charges", "amount": <total> }.
+CRITICAL RULES:
+- Do NOT merge different charge lines. Each row on the bill = one line item. For example if there are two water usage lines ($65.57 and $25.55), return TWO separate items with their exact descriptions (e.g. "12/09/25 - 12/31/25 6.6774 KGals of water (Tier 1 @ $9.82 per thousand)" and "01/01/26 - 01/08/26 2.3226 KGals of water (Tier 1 @ $11.00 per thousand)").
+- Use the EXACT charge names from the bill for these three fixed charges (they will be split equally among tenants): "Monthly Water Service Charge", "Monthly Trash & Recycling", "Monthly Wastewater Service Charge". Do not rename or shorten them.
+- Actual water usage charges (e.g. KGals of water, Tier 1, per thousand) = separate lines, one per row on the bill. These will be split by usage.
+- "description" = exact or near-exact charge name from the bill. "amount" = numeric amount only (no $).
+- If you cannot find a breakdown, return one line: { "description": "Current charges", "amount": <total> }.
+
+Return a JSON object: { "lineItems": [ { "description": "Monthly Water Service Charge", "amount": 67.58 }, { "description": "Monthly Trash & Recycling", "amount": 65.74 }, { "description": "Monthly Wastewater Service Charge", "amount": 124.45 }, { "description": "12/09/25 - 12/31/25 6.6774 KGals of water (Tier 1 @ $9.82 per thousand)", "amount": 65.57 }, { "description": "01/01/26 - 01/08/26 2.3226 KGals of water (Tier 1 @ $11.00 per thousand)", "amount": 25.55 }, ... ] }
 
 Bill data:
 
@@ -287,8 +311,21 @@ export async function getBillsFromOpenAI(
       )
     }
 
+    const n = units.length
     const proportions = units.map((u) => u.usage / totalUsage)
-    const amountsDue = proportions.map((p) => Math.round(parsed!.totalDue * p * 100) / 100)
+
+    // Split charges: proportional (by submeter usage) vs equal (by tenant count)
+    const proportionalItems = parsed!.lineItems.filter((li) => !isEqualSplitCharge(li.description))
+    const equalItems = parsed!.lineItems.filter((li) => isEqualSplitCharge(li.description))
+
+    const proportionalTotal = proportionalItems.reduce((s, li) => s + li.amount, 0)
+    const equalTotal = equalItems.reduce((s, li) => s + li.amount, 0)
+
+    const amountsDue = units.map((_, i) => {
+      const propShare = proportionalTotal * proportions[i]!
+      const equalShare = n > 0 ? equalTotal / n : 0
+      return Math.round((propShare + equalShare) * 100) / 100
+    })
     const sumRounded = amountsDue.reduce((s, a) => s + a, 0)
     const diff = Math.round((parsed!.totalDue - sumRounded) * 100) / 100
     if (diff !== 0 && amountsDue.length > 0) amountsDue[amountsDue.length - 1]! += diff
@@ -296,12 +333,21 @@ export async function getBillsFromOpenAI(
     const bills: StructuredBill[] = units.map((unit, i) => {
       const proportion = proportions[i]!
       const amountDue = amountsDue[i]!
-      const lineItems = parsed!.lineItems.map((li) => ({
+
+      const proportionalLines = proportionalItems.map((li) => ({
         description: li.description,
         quantity: undefined as string | undefined,
         rate: undefined as string | undefined,
         amount: formatMoney(Math.round(li.amount * proportion * 100) / 100),
       }))
+      const equalLines = equalItems.map((li) => ({
+        description: li.description,
+        quantity: undefined as string | undefined,
+        rate: undefined as string | undefined,
+        amount: formatMoney(Math.round((li.amount / n) * 100) / 100),
+      }))
+      const lineItems = [...proportionalLines, ...equalLines]
+
       return {
         accountNumber: parsed!.accountNumber,
         serviceFor: unit.label,
