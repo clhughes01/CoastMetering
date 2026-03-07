@@ -4,6 +4,81 @@ This doc describes how to automatically pull current bills from the City of Esco
 
 ---
 
+## Complete setup guide (migration already run)
+
+You have already run **`utility-provider-bills.sql`**, so the tables exist. Do the following in order.
+
+### Step 1: Create a CSV of properties and Escondido account numbers
+
+One row per property that has an Escondido water account.
+
+**Option A – By property ID**
+
+1. In Supabase: **Table Editor** → **properties**. Copy the **id** (UUID) for each property.
+2. Get each property's Escondido **account number** (from the bill or from [invoicecloud.com/escondidoca](https://www.invoicecloud.com/escondidoca) when logged in).
+3. Create a CSV with header and one data row per property:
+
+```csv
+property_id,account_number
+a1b2c3d4-e5f6-7890-abcd-ef1234567890,12345678
+b2c3d4e5-f6a7-8901-bcde-f12345678901,87654321
+```
+
+**Option B – By address**
+
+Use the same address/city/state/zip as in your **properties** table:
+
+```csv
+address,city,state,zip_code,account_number
+123 Main St,Escondido,CA,92025,12345678
+456 Oak Ave,Escondido,CA,92025,87654321
+```
+
+Save the file (e.g. `utility-accounts.csv`) in or next to your project.
+
+### Step 2: Run the bulk import
+
+1. Terminal in your **CoastMetering** project: `npm install`
+2. Set Supabase env (use your real values):
+   - **NEXT_PUBLIC_SUPABASE_URL** — Supabase → **Settings** → **API** → Project URL
+   - **SUPABASE_SERVICE_ROLE_KEY** — Same page → **service_role** key (not anon)
+
+   ```bash
+   export NEXT_PUBLIC_SUPABASE_URL="https://xxxxx.supabase.co"
+   export SUPABASE_SERVICE_ROLE_KEY="eyJhbGc..."
+   ```
+
+3. Run: `npm run import-utility-accounts -- utility-accounts.csv`  
+   Expect: **`Imported N property → account mapping(s) for escondido_water.`**
+4. In Supabase **Table Editor** → **property_utility_accounts**, confirm rows with `utility_key = escondido_water`.
+
+### Step 3: Add GitHub Actions secrets
+
+1. GitHub → your **CoastMetering** repo → **Settings** → **Secrets and variables** → **Actions**.
+2. **New repository secret** for each:
+
+| Secret name | Value |
+|-------------|--------|
+| ESCONDIDO_LOGIN_EMAIL | Email for [invoicecloud.com/escondidoca](https://www.invoicecloud.com/escondidoca) |
+| ESCONDIDO_LOGIN_PASSWORD | Password for that account |
+| NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
+| SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
+
+### Step 4: Push and run the workflow once
+
+1. Commit and push the branch that has `.github/workflows/fetch-escondido-bills.yml` and the scripts.
+2. GitHub → **Actions** → **Fetch Escondido bills** → **Run workflow** → **Run workflow**.
+3. Open the run and check logs for **`Inserted N bill(s).`** (or fix any errors).
+4. In Supabase **Table Editor** → **utility_provider_bills**, confirm new rows if the portal had bills.
+
+### Step 5: Done
+
+The workflow runs **daily at 8:00 AM UTC**. New bills are added to **utility_provider_bills** automatically. To change the schedule, edit `.github/workflows/fetch-escondido-bills.yml` → `schedule`.
+
+**Optional – test locally:** `npm install` then `npx playwright install chromium`, set the four env vars, then `npm run fetch-escondido-bills`.
+
+---
+
 ## Step-by-step setup (do these in order)
 
 ### Step 1: Run the database migration
