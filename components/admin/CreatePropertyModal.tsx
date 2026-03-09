@@ -54,6 +54,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
     water_utility: '',
     power_utility: '',
     gas_utility: '',
+    water_account_number: '',
   })
 
   const addUnit = () => {
@@ -121,6 +122,19 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
 
       const propertyId = propertyResult.data.id
 
+      // If Escondido water account number provided, link it so bill fetch can associate bills with this property
+      if (formData.water_account_number?.trim()) {
+        await fetch('/api/admin/property-utility-accounts', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            property_id: propertyId,
+            utility_key: 'escondido_water',
+            account_number: formData.water_account_number.trim(),
+          }),
+        })
+      }
+
       // Then, create all units
       const unitPromises = validUnits.map(unitNumber =>
         fetch('/api/units/create', {
@@ -156,6 +170,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
         water_utility: '',
         power_utility: '',
         gas_utility: '',
+        water_account_number: '',
       })
       setUnits([''])
       setSelectedManagerId('')
@@ -328,6 +343,20 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
                 placeholder="Escondido Water"
                 disabled={loading}
               />
+            </div>
+            <div>
+              <Label htmlFor="water_account_number">Water Account # (Escondido)</Label>
+              <Input
+                id="water_account_number"
+                type="text"
+                value={formData.water_account_number}
+                onChange={(e) => setFormData({ ...formData, water_account_number: e.target.value })}
+                placeholder="Account number for bill fetch"
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional. Enables automatic bill fetch for this property.
+              </p>
             </div>
             <div>
               <Label htmlFor="power_utility">Power Utility</Label>

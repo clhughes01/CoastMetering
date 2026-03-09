@@ -75,6 +75,8 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 
 The workflow runs **daily at 8:00 AM UTC**. New bills are added to **utility_provider_bills** automatically. To change the schedule, edit `.github/workflows/fetch-escondido-bills.yml` → `schedule`.
 
+**Adding properties in the UI:** When an admin or property manager **creates** or **edits** a property in the app, they can enter **Water Account # (Escondido)**. That value is saved to `property_utility_accounts`, so the next scheduled bill fetch will associate that account’s bills with the property. No extra CSV or SQL needed for new properties.
+
 **Optional – test locally:** `npm install` then `npx playwright install chromium`, set the four env vars, then `npm run fetch-escondido-bills`.
 
 ---

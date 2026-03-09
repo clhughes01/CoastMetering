@@ -56,6 +56,7 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
     water_utility: '',
     power_utility: '',
     gas_utility: '',
+    water_account_number: '',
   })
 
   useEffect(() => {
@@ -69,11 +70,29 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
         water_utility: property.water_utility || '',
         power_utility: property.power_utility || '',
         gas_utility: property.gas_utility || '',
+        water_account_number: '',
       })
       loadUnits()
+      loadUtilityAccounts()
       setNewUnits([''])
     }
   }, [property, isOpen])
+
+  const loadUtilityAccounts = async () => {
+    if (!property) return
+    try {
+      const res = await fetch(`/api/admin/property-utility-accounts?property_id=${property.id}`)
+      const result = await res.json()
+      if (result?.data?.length) {
+        const escondido = result.data.find((r: { utility_key: string }) => r.utility_key === 'escondido_water')
+        if (escondido) {
+          setFormData((prev) => ({ ...prev, water_account_number: escondido.account_number ?? '' }))
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   const loadUnits = async () => {
     if (!property) return
@@ -131,6 +150,17 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
       if (!propertyResponse.ok) {
         throw new Error(propertyResult.details || propertyResult.error || 'Failed to update property')
       }
+
+      // Sync Escondido water account number for bill fetch
+      await fetch('/api/admin/property-utility-accounts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          property_id: property.id,
+          utility_key: 'escondido_water',
+          account_number: formData.water_account_number?.trim() ?? '',
+        }),
+      })
 
       // Add new units if any
       const validNewUnits = newUnits.filter(unit => unit.trim() !== '')
@@ -272,6 +302,20 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
                 onChange={(e) => setFormData({ ...formData, water_utility: e.target.value })}
                 disabled={loading}
               />
+            </div>
+            <div>
+              <Label htmlFor="water_account_number">Water Account # (Escondido)</Label>
+              <Input
+                id="water_account_number"
+                type="text"
+                value={formData.water_account_number}
+                onChange={(e) => setFormData({ ...formData, water_account_number: e.target.value })}
+                placeholder="Account number for bill fetch"
+                disabled={loading}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional. Enables automatic bill fetch for this property.
+              </p>
             </div>
             <div>
               <Label htmlFor="power_utility">Power Utility</Label>
