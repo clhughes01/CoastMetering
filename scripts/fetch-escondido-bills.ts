@@ -140,7 +140,7 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Fill login form and submit
+  // 2) Fill login form and submit — must click the form's Sign In button (Enter often doesn't submit on this site)
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
@@ -148,15 +148,44 @@ async function scrapeBillsFromPortal(
   log("Filling login...")
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
-  const submitBtn = loc('button:has-text("Sign In"), input[type="submit"], input[type="image"]').first()
-  try {
-    await submitBtn.click({ timeout: 5000 })
-    log("Clicked Sign In button")
-  } catch {
-    await passwordInput.press("Enter")
-    log("Submitted via Enter")
+
+  // Submit: find button inside the form (not the header "Sign In" link) — try multiple selectors
+  const submitSelectors = [
+    'form button:has-text("Sign In")',
+    'form input[type="submit"]',
+    'form input[type="image"]',
+    'button:has-text("Sign In")',
+    'input[type="submit"]',
+    'input[type="image"]',
+    '[type="submit"]',
+  ]
+  let submitted = false
+  for (const sel of submitSelectors) {
+    try {
+      const btn = loc(sel).first()
+      await btn.waitFor({ state: "visible", timeout: 3000 })
+      await btn.click()
+      log(`Clicked submit (${sel})`)
+      submitted = true
+      break
+    } catch {
+      continue
+    }
   }
-  await page.waitForTimeout(8000)
+  if (!submitted) {
+    log("Trying Enter key...")
+    await passwordInput.press("Enter")
+  }
+
+  // Wait for navigation away from login page (customerlogin.aspx → dashboard)
+  log("Waiting for dashboard (leaving customerlogin)...")
+  try {
+    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+    log(`Navigated to: ${page.url()}`)
+  } catch {
+    log(`Still on: ${page.url()}`)
+  }
+  await page.waitForTimeout(3000)
   log(`After login URL: ${page.url()}`)
 
   // 3) Dashboard: click "Pay My Invoices" to open Open Invoices page (not My Account dropdown)
