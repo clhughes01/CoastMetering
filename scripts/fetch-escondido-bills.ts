@@ -36,14 +36,15 @@ function getSupabase() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
-async function getPropertyAccountMapping(supabase: ReturnType<typeof createClient>) {
+async function getPropertyAccountMapping(supabase: any) {
   const { data, error } = await supabase
     .from("property_utility_accounts")
     .select("property_id, account_number")
     .eq("utility_key", UTILITY_KEY)
   if (error) throw new Error(`Failed to load property_utility_accounts: ${error.message}`)
   const map = new Map<string, string>()
-  for (const row of data || []) {
+  const rows = (data || []) as { property_id: string; account_number: string }[]
+  for (const row of rows) {
     map.set(String(row.account_number).trim(), row.property_id)
   }
   if (map.size === 0) {
@@ -74,53 +75,75 @@ function normalizeDate(s: string): string {
 
 /**
  * Scrape bills from the Invoice Cloud portal after login.
- * Selectors may need to be updated if the portal changes.
+ * Flow: Login → My Account dropdown → View or pay open invoices → parse account # and each bill (View invoice = PDF).
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
   loginEmail: string,
   loginPassword: string
 ): Promise<FetchedBill[]> {
-  await page.goto(PORTAL_URL, { waitUntil: "networkidle", timeout: 30000 })
+  await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 30000 })
 
-  // Login: typical Invoice Cloud form
+  // Login
   const emailSel = 'input[type="email"], input[name*="email"], input[id*="email"]'
   const passwordSel = 'input[type="password"], input[name*="password"]'
-  const submitSel = 'button[type="submit"], input[type="submit"], a:has-text("Sign In"), button:has-text("Sign In")'
+  const submitSel = 'button[type="submit"], input[type="submit"], button:has-text("Sign In"), a:has-text("Sign In")'
 
   const email = page.locator(emailSel).first()
-  const password = page.locator(passwordSel).first()
-  const submit = page.locator(submitSel).first()
-
   if ((await email.count()) > 0) {
     await email.fill(loginEmail)
-    await password.fill(loginPassword)
-    await submit.click()
-    await page.waitForURL(/invoicecloud\.com/, { timeout: 15000 }).catch(() => {})
+    await page.locator(passwordSel).first().fill(loginPassword)
+    await page.locator(submitSel).first().click()
+    await page.waitForTimeout(3000)
   }
 
-  await page.waitForTimeout(2000)
+  // My Account dropdown → View or pay open invoices
+  const myAccount = page.getByText(/my account/i).first()
+  if ((await myAccount.count()) > 0) {
+    await myAccount.click()
+    await page.waitForTimeout(1000)
+  }
+
+  const viewInvoices = page.getByRole("link", { name: /view.*open invoices|pay open invoices|open invoices/i }).first()
+  if ((await viewInvoices.count()) > 0) {
+    await viewInvoices.click()
+    await page.waitForTimeout(4000)
+  } else {
+    // Try by text anywhere
+    const viewPay = page.locator('a:has-text("View"), a:has-text("Pay"), a:has-text("Invoices")').first()
+    if ((await viewPay.count()) > 0) {
+      await viewPay.click()
+      await page.waitForTimeout(2000)
+    }
+  }
 
   const bills: FetchedBill[] = []
-  const table = page.locator("table").first()
-  const tableRows = table.locator("tbody tr")
-  const rowCount = await tableRows.count()
 
-  if (rowCount > 0) {
-    for (let i = 0; i < rowCount; i++) {
-      const row = tableRows.nth(i)
-      const text = await row.innerText()
-      const accountMatch = text.match(/account\s*#?\s*(\d+)/i) || text.match(/#\s*(\d{4,})/i)
-      const accountNumber = accountMatch ? accountMatch[1]! : ""
-      const amountMatch = text.match(/\$[\d,]+\.?\d*/)
+  // Account number on page (heading or label)
+  const bodyText = await page.locator("body").innerText()
+  const accountOnPage = bodyText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || bodyText.match(/#\s*(\d{4,})/i)
+  const pageAccountNumber = accountOnPage ? accountOnPage[1]!.trim() : ""
+
+  // Find "View invoice" links (each = one bill, and we get the PDF URL from the link)
+  const viewInvoiceLinks = page.locator('a:has-text("View invoice"), a:has-text("View Invoice"), a:has-text("view invoice")')
+  const linkCount = await viewInvoiceLinks.count()
+
+  if (linkCount > 0) {
+    for (let i = 0; i < linkCount; i++) {
+      const link = viewInvoiceLinks.nth(i)
+      const href = (await link.getAttribute("href")) || ""
+      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
+      const row = link.locator("xpath=ancestor::tr | xpath=ancestor::div[contains(@class,\"row\")] | xpath=ancestor::li").first()
+      const rowText = (await row.count()) > 0 ? await row.innerText() : await page.locator("body").innerText()
+      const amountMatch = rowText.match(/\$[\d,]+\.?\d*/)
       const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
-      const dateMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
+      const dateMatch = rowText.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
       const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
       const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
       const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
-      const link = row.locator("a[href*='pdf'], a[href*='invoice'], a[href*='view']").first()
-      const href = (await link.getAttribute("href")) || null
-      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
+      const accountMatch = rowText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || rowText.match(/#\s*(\d{4,})/i)
+      const accountNumber = accountMatch ? accountMatch[1]!.trim() : pageAccountNumber
+
       bills.push({
         accountNumber,
         periodStart,
@@ -133,26 +156,33 @@ async function scrapeBillsFromPortal(
     }
   }
 
+  // Fallback: table with tbody tr
   if (bills.length === 0) {
-    const links = page.locator('a[href*="invoice"], a[href*="bill"], [data-testid*="bill"]')
-    const count = await links.count()
-    for (let i = 0; i < Math.min(count, 24); i++) {
-      const el = links.nth(i)
-      const text = await el.innerText()
+    const table = page.locator("table").first()
+    const rows = table.locator("tbody tr")
+    const rowCount = await rows.count()
+    for (let i = 0; i < rowCount; i++) {
+      const row = rows.nth(i)
+      const text = await row.innerText()
+      const accountMatch = text.match(/account\s*#?\s*(\d+)/i) || text.match(/#\s*(\d{4,})/i)
+      const accountNumber = accountMatch ? accountMatch[1]! : pageAccountNumber
       const amountMatch = text.match(/\$[\d,]+\.?\d*/)
       const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
       const dateMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
       const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
       const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
-      const pdfUrl = (await el.getAttribute("href")) || null
+      const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
+      const viewLink = row.locator('a[href*="invoice"], a[href*="pdf"], a:has-text("View")').first()
+      const href = (await viewLink.getAttribute("href")) || null
+      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
       bills.push({
-        accountNumber: "",
+        accountNumber,
         periodStart,
         periodEnd,
         amountDue: amount,
-        dueDate: dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null,
-        externalId: pdfUrl ? pdfUrl.slice(0, 500) : null,
-        pdfUrl: pdfUrl ? (pdfUrl.startsWith("http") ? pdfUrl : new URL(pdfUrl, PORTAL_URL).href) : null,
+        dueDate,
+        externalId: href ? href.slice(0, 500) : null,
+        pdfUrl,
       })
     }
   }
@@ -188,17 +218,24 @@ export async function runEscondidoBillFetch(options?: {
     const page = await browser.newPage()
     const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword)
 
+    console.log(`Scraped ${bills.length} bill(s) from portal. Property mapping has ${accountToProperty.size} account(s).`)
+
     // If we have a single account in the mapping, use it for all bills from this login
     const defaultAccount =
       accountToProperty.size === 1 ? Array.from(accountToProperty.keys())[0] : null
     const defaultPropertyId = defaultAccount ? accountToProperty.get(defaultAccount) : null
 
     for (const bill of bills) {
-      if (!bill.periodStart || bill.amountDue <= 0) continue
-      const accountNumber = bill.accountNumber || defaultAccount || "default"
+      if (!bill.periodStart && !bill.pdfUrl) {
+        errors.push(`Skipped bill (no period or PDF): ${JSON.stringify(bill)}`)
+        continue
+      }
+      const periodStart = bill.periodStart || new Date().toISOString().slice(0, 10)
+      const periodEnd = bill.periodEnd || periodStart
+      const accountNumber = bill.accountNumber || defaultAccount || ""
       const propertyId = accountToProperty.get(accountNumber) || defaultPropertyId
       if (!propertyId) {
-        errors.push(`No property mapped for account ${accountNumber}, skipping bill ${bill.periodStart}`)
+        errors.push(`No property mapped for account "${accountNumber}", skipping bill ${periodStart}`)
         continue
       }
 
@@ -207,9 +244,9 @@ export async function runEscondidoBillFetch(options?: {
           property_id: propertyId,
           utility_key: UTILITY_KEY,
           account_number: accountNumber,
-          billing_period_start: bill.periodStart,
-          billing_period_end: bill.periodEnd,
-          amount_due: bill.amountDue,
+          billing_period_start: periodStart,
+          billing_period_end: periodEnd,
+          amount_due: bill.amountDue >= 0 ? bill.amountDue : 0,
           due_date: bill.dueDate,
           external_id: bill.externalId,
           pdf_url: bill.pdfUrl,
@@ -222,7 +259,7 @@ export async function runEscondidoBillFetch(options?: {
         }
       )
       if (error) {
-        errors.push(`Insert failed ${bill.periodStart}: ${error.message}`)
+        errors.push(`Insert failed ${periodStart}: ${error.message}`)
       } else {
         inserted++
       }
