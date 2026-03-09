@@ -76,52 +76,134 @@ function normalizeDate(s: string): string {
 /**
  * Scrape bills from the Invoice Cloud portal after login.
  * Flow: Login → My Account dropdown → "View or Pay Open Invoices" → parse each "View Invoice" button/row.
+ * Post-login content is often in an iframe — we search main page and all frames.
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
   loginEmail: string,
   loginPassword: string
 ): Promise<FetchedBill[]> {
-  await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 30000 })
+  await page.goto(PORTAL_URL, { waitUntil: "load", timeout: 45000 })
 
-  // Login
+  // Login — form may be on main page or inside an iframe
   const emailSel = 'input[type="email"], input[name*="email"], input[id*="email"]'
   const passwordSel = 'input[type="password"], input[name*="password"]'
   const submitSel = 'button[type="submit"], input[type="submit"], button:has-text("Sign In"), a:has-text("Sign In")'
 
-  const email = page.locator(emailSel).first()
-  if ((await email.count()) > 0) {
-    await email.fill(loginEmail)
+  let didLogin = false
+  const emailOnPage = page.locator(emailSel).first()
+  if ((await emailOnPage.count()) > 0) {
+    await emailOnPage.fill(loginEmail)
     await page.locator(passwordSel).first().fill(loginPassword)
     await page.locator(submitSel).first().click()
-    await page.waitForTimeout(3000)
+    didLogin = true
   }
+  if (!didLogin) {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue
+      try {
+        const emailInFrame = frame.locator(emailSel).first()
+        if ((await emailInFrame.count()) > 0) {
+          await emailInFrame.fill(loginEmail)
+          await frame.locator(passwordSel).first().fill(loginPassword)
+          await frame.locator(submitSel).first().click()
+          didLogin = true
+          break
+        }
+      } catch {
+        continue
+      }
+    }
+  }
+  if (didLogin) {
+    await page.waitForTimeout(5000)
+  }
+
+  // Wait for post-login content (may be in iframe) — poll up to 15s
+  const deadline = Date.now() + 15000
+  let ctx: import("playwright").Frame | import("playwright").Page = page
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(1000)
+    for (const frame of page.frames()) {
+      try {
+        if ((await frame.locator('text="My Account"').count()) > 0) {
+          ctx = frame
+          break
+        }
+        if ((await frame.locator('text="View or Pay Open Invoices"').count()) > 0) {
+          ctx = frame
+          break
+        }
+        if ((await frame.locator('text="View Invoice"').count()) > 0) {
+          ctx = frame
+          break
+        }
+      } catch {
+        continue
+      }
+    }
+    if (ctx !== page) break
+    if ((await page.locator('text="My Account"').count()) > 0) break
+    if ((await page.locator('text="View or Pay Open Invoices"').count()) > 0) break
+    if ((await page.locator('text="View Invoice"').count()) > 0) break
+  }
+
+  // Prefer the frame that has "My Account" for clicking
+  for (const frame of page.frames()) {
+    try {
+      if ((await frame.locator('text="My Account"').first().count()) > 0) {
+        ctx = frame
+        break
+      }
+    } catch {
+      continue
+    }
+  }
+  if (ctx === page) {
+    for (const frame of page.frames()) {
+      try {
+        if ((await frame.locator('text="View or Pay Open Invoices"').first().count()) > 0) {
+          ctx = frame
+          break
+        }
+      } catch {
+        continue
+      }
+    }
+  }
+
+  const loc = (selector: string) => (ctx === page ? (ctx as import("playwright").Page).locator(selector) : (ctx as import("playwright").Frame).locator(selector))
 
   // My Account dropdown
-  const myAccount = page.getByText("My Account", { exact: true }).first()
+  const myAccount = loc('text="My Account"').first()
   if ((await myAccount.count()) > 0) {
     await myAccount.click()
-    await page.waitForTimeout(1500)
+    await page.waitForTimeout(2000)
   }
 
-  // "View or Pay Open Invoices" — can be a link or button
-  const viewOrPay = page.getByText("View or Pay Open Invoices", { exact: true }).first()
+  // "View or Pay Open Invoices"
+  const viewOrPay = loc('text="View or Pay Open Invoices"').first()
   if ((await viewOrPay.count()) > 0) {
     await viewOrPay.click()
-    await page.waitForTimeout(4000)
+    await page.waitForTimeout(5000)
   }
 
   const bills: FetchedBill[] = []
-
-  const bodyText = await page.locator("body").innerText()
+  const bodyText = await (ctx === page ? (ctx as import("playwright").Page).locator("body") : (ctx as import("playwright").Frame).locator("body")).innerText()
   const accountOnPage = bodyText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || bodyText.match(/#\s*(\d{4,})/i)
   const pageAccountNumber = accountOnPage ? accountOnPage[1]!.trim() : ""
 
-  // "View Invoice" — blue button (or link); each one = one bill
-  const viewInvoiceButtons = page.getByRole("button", { name: "View Invoice" })
-  const viewInvoiceLinks = page.getByRole("link", { name: "View Invoice" })
-  const buttonCount = await viewInvoiceButtons.count()
-  const linkCount = await viewInvoiceLinks.count()
+  // "View Invoice" — button or link
+  const viewInvoiceButtons = loc('role=button[name="View Invoice"]')
+  const viewInvoiceLinks = loc('role=link[name="View Invoice"]')
+  let buttonCount = 0
+  let linkCount = 0
+  try {
+    buttonCount = await viewInvoiceButtons.count()
+    linkCount = await viewInvoiceLinks.count()
+  } catch {
+    // fallback
+  }
   const totalViewInvoice = buttonCount + linkCount
 
   if (totalViewInvoice > 0) {
@@ -153,9 +235,8 @@ async function scrapeBillsFromPortal(
     }
   }
 
-  // Fallback: any clickable with exact text "View Invoice"
   if (bills.length === 0) {
-    const anyViewInvoice = page.locator('button:has-text("View Invoice"), a:has-text("View Invoice")')
+    const anyViewInvoice = loc('button:has-text("View Invoice"), a:has-text("View Invoice")')
     const count = await anyViewInvoice.count()
     for (let i = 0; i < count; i++) {
       const el = anyViewInvoice.nth(i)
@@ -182,9 +263,8 @@ async function scrapeBillsFromPortal(
     }
   }
 
-  // Fallback: table rows
   if (bills.length === 0) {
-    const table = page.locator("table").first()
+    const table = loc("table").first()
     const rows = table.locator("tbody tr")
     const rowCount = await rows.count()
     for (let i = 0; i < rowCount; i++) {
@@ -209,6 +289,15 @@ async function scrapeBillsFromPortal(
         externalId: href ? href.slice(0, 500) : null,
         pdfUrl,
       })
+    }
+  }
+
+  if (bills.length === 0 && process.env.ESCONDIDO_DEBUG === "1") {
+    try {
+      await page.screenshot({ path: "debug-escondido.png", fullPage: true })
+      console.error("Debug: saved screenshot to debug-escondido.png")
+    } catch (e) {
+      console.error("Debug screenshot failed:", e)
     }
   }
 
