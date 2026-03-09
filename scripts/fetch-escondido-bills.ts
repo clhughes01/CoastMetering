@@ -368,6 +368,7 @@ export async function runEscondidoBillFetch(options?: {
 
   const errors: string[] = []
   let inserted = 0
+  let alreadyExisted = 0
 
   try {
     const page = await browser.newPage()
@@ -394,31 +395,42 @@ export async function runEscondidoBillFetch(options?: {
         continue
       }
 
-      const { error } = await supabase.from("utility_provider_bills").upsert(
-        {
-          property_id: propertyId,
-          utility_key: UTILITY_KEY,
-          account_number: accountNumber,
-          billing_period_start: periodStart,
-          billing_period_end: periodEnd,
-          amount_due: bill.amountDue >= 0 ? bill.amountDue : 0,
-          due_date: bill.dueDate,
-          external_id: bill.externalId,
-          pdf_url: bill.pdfUrl,
-          fetched_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: "property_id,utility_key,billing_period_start",
-          ignoreDuplicates: false,
-        }
-      )
+      const { data, error } = await supabase
+        .from("utility_provider_bills")
+        .upsert(
+          {
+            property_id: propertyId,
+            utility_key: UTILITY_KEY,
+            account_number: accountNumber,
+            billing_period_start: periodStart,
+            billing_period_end: periodEnd,
+            amount_due: bill.amountDue >= 0 ? bill.amountDue : 0,
+            due_date: bill.dueDate,
+            external_id: bill.externalId,
+            pdf_url: bill.pdfUrl,
+            fetched_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            onConflict: "property_id,utility_key,billing_period_start",
+            ignoreDuplicates: true, // only insert new bills; never overwrite existing (preserves paid status etc.)
+          }
+        )
+        .select("id")
+
       if (error) {
         errors.push(`Insert failed ${periodStart}: ${error.message}`)
-      } else {
+      } else if (data && data.length > 0) {
         inserted++
+      } else {
+        alreadyExisted++
       }
     }
+
+    if (alreadyExisted > 0) {
+      console.log(`${alreadyExisted} bill(s) already in database (unchanged).`)
+    }
+    console.log(`Inserted ${inserted} new bill(s).`)
   } finally {
     await browser.close()
   }
