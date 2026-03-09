@@ -150,6 +150,7 @@ async function scrapeBillsFromPortal(
   log("Filling login...")
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
+  await page.waitForTimeout(1000)
 
   // Submit: click the form's Sign In button. Do NOT click the nav "Sign In" link (only one match = nav).
   let submitted = false
@@ -168,7 +169,7 @@ async function scrapeBillsFromPortal(
     const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
     try {
       const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
-      await submitInForm.waitFor({ state: "visible", timeout: 5000 })
+      await submitInForm.waitFor({ state: "visible", timeout: 12000 })
       await submitInForm.click()
       log("Clicked submit (form containing password → submit control)")
       submitted = true
@@ -204,22 +205,22 @@ async function scrapeBillsFromPortal(
   // Wait for navigation away from login page (customerlogin.aspx → dashboard)
   log("Waiting for dashboard (leaving customerlogin)...")
   try {
-    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 })
     log(`Navigated to: ${page.url()}`)
   } catch {
     log(`Still on: ${page.url()}`)
   }
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(4000)
   log(`After login URL: ${page.url()}`)
 
-  // 3) Dashboard: click "Pay My Invoices" to open Open Invoices page (not My Account dropdown)
+  // 3) Dashboard: click "Pay My Invoices" to open Open Invoices page
   log("Looking for Pay My Invoices...")
   const payInvoicesBtn = loc('button:has-text("Pay My Invoices"), a:has-text("Pay My Invoices")').first()
   try {
-    await payInvoicesBtn.waitFor({ state: "visible", timeout: 15000 })
+    await payInvoicesBtn.waitFor({ state: "visible", timeout: 25000 })
     await payInvoicesBtn.click()
     log("Clicked Pay My Invoices")
-    await page.waitForTimeout(5000)
+    await page.waitForTimeout(8000)
   } catch (e) {
     log(`Pay My Invoices: ${e instanceof Error ? e.message : String(e)}`)
   }
@@ -303,7 +304,20 @@ async function scrapeBillsFromPortal(
     }
   }
 
-  if (bills.length === 0) {
+  // Deduplicate: same account + period can appear twice (e.g. two "View Invoice" links per row)
+  const seen = new Set<string>()
+  const unique: FetchedBill[] = []
+  for (const b of bills) {
+    const key = `${b.accountNumber}|${b.periodStart}|${b.amountDue}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(b)
+  }
+  if (unique.length < bills.length) {
+    log(`Deduped ${bills.length} → ${unique.length} bill(s).`)
+  }
+
+  if (unique.length === 0) {
     log("Saving debug screenshot and HTML...")
     try {
       await page.screenshot({ path: "debug-escondido.png", fullPage: true })
@@ -314,8 +328,8 @@ async function scrapeBillsFromPortal(
     }
   }
 
-  log(`Done. Parsed ${bills.length} bill(s).`)
-  return bills
+  log(`Done. Parsed ${unique.length} bill(s).`)
+  return unique
 }
 
 export async function runEscondidoBillFetch(options?: {
