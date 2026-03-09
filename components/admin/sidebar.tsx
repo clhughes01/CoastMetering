@@ -18,6 +18,7 @@ import {
   Building2,
   UserCog,
   Home,
+  Droplets,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
@@ -50,6 +51,7 @@ const navigation = [
     title: "UTILITY BILLS",
     items: [
       { name: "Utility Bills", href: "/admin/utility-bills", icon: Receipt },
+      { name: "Escondido Bills", href: "/admin/provider-bills", icon: Droplets },
       { name: "Extract Bill (Textract)", href: "/admin/textract-test", icon: Scan },
     ],
   },

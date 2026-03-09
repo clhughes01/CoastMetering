@@ -75,20 +75,19 @@ function normalizeDate(s: string): string {
 
 /**
  * Scrape bills from the Invoice Cloud portal after login.
- * Flow: Login → My Account dropdown → "View or Pay Open Invoices" → parse each "View Invoice" button/row.
- * Post-login content is often in an iframe — we search main page and all frames.
+ * Portal content loads in an iframe (portal/.../Site2.aspx). We wait for that frame and run all actions inside it.
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
   loginEmail: string,
   loginPassword: string
 ): Promise<FetchedBill[]> {
-  await page.goto(PORTAL_URL, { waitUntil: "load", timeout: 45000 })
+  await page.goto(PORTAL_URL, { waitUntil: "load", timeout: 60000 })
 
-  // Login — form may be on main page or inside an iframe
-  const emailSel = 'input[type="email"], input[name*="email"], input[id*="email"]'
+  // Login — form is usually on main page or in first iframe
+  const emailSel = 'input[type="email"], input[name*="email"], input[id*="email"], input[type="text"]'
   const passwordSel = 'input[type="password"], input[name*="password"]'
-  const submitSel = 'button[type="submit"], input[type="submit"], button:has-text("Sign In"), a:has-text("Sign In")'
+  const submitSel = 'button[type="submit"], input[type="submit"], button:has-text("Sign In"), a:has-text("Sign In"), input[type="image"]'
 
   let didLogin = false
   const emailOnPage = page.locator(emailSel).first()
@@ -102,9 +101,9 @@ async function scrapeBillsFromPortal(
     for (const frame of page.frames()) {
       if (frame === page.mainFrame()) continue
       try {
-        const emailInFrame = frame.locator(emailSel).first()
-        if ((await emailInFrame.count()) > 0) {
-          await emailInFrame.fill(loginEmail)
+        const ef = frame.locator(emailSel).first()
+        if ((await ef.count()) > 0) {
+          await ef.fill(loginEmail)
           await frame.locator(passwordSel).first().fill(loginPassword)
           await frame.locator(submitSel).first().click()
           didLogin = true
@@ -116,80 +115,70 @@ async function scrapeBillsFromPortal(
     }
   }
   if (didLogin) {
-    await page.waitForTimeout(5000)
+    await page.waitForTimeout(6000)
   }
 
-  // Wait for post-login content (may be in iframe) — poll up to 15s
-  const deadline = Date.now() + 15000
-  let ctx: import("playwright").Frame | import("playwright").Page = page
-  while (Date.now() < deadline) {
-    await page.waitForTimeout(1000)
-    for (const frame of page.frames()) {
-      try {
-        if ((await frame.locator('text="My Account"').count()) > 0) {
-          ctx = frame
-          break
-        }
-        if ((await frame.locator('text="View or Pay Open Invoices"').count()) > 0) {
-          ctx = frame
-          break
-        }
-        if ((await frame.locator('text="View Invoice"').count()) > 0) {
-          ctx = frame
-          break
-        }
-      } catch {
-        continue
-      }
-    }
-    if (ctx !== page) break
-    if ((await page.locator('text="My Account"').count()) > 0) break
-    if ((await page.locator('text="View or Pay Open Invoices"').count()) > 0) break
-    if ((await page.locator('text="View Invoice"').count()) > 0) break
-  }
-
-  // Prefer the frame that has "My Account" for clicking
-  for (const frame of page.frames()) {
-    try {
-      if ((await frame.locator('text="My Account"').first().count()) > 0) {
-        ctx = frame
+  // Wait for the portal iframe (Invoice Cloud loads app in iframe with "portal" or "Site2" in URL)
+  let portalFrame: import("playwright").Frame | null = null
+  const frameDeadline = Date.now() + 25000
+  while (Date.now() < frameDeadline) {
+    await page.waitForTimeout(800)
+    for (const f of page.frames()) {
+      const u = f.url()
+      if (u.includes("portal") || u.includes("Site2") || u.includes("invoicecloud")) {
+        portalFrame = f
         break
       }
-    } catch {
-      continue
     }
-  }
-  if (ctx === page) {
-    for (const frame of page.frames()) {
-      try {
-        if ((await frame.locator('text="View or Pay Open Invoices"').first().count()) > 0) {
-          ctx = frame
-          break
-        }
-      } catch {
-        continue
-      }
-    }
+    if (portalFrame) break
   }
 
-  const loc = (selector: string) => (ctx === page ? (ctx as import("playwright").Page).locator(selector) : (ctx as import("playwright").Frame).locator(selector))
+  let activeCtx: import("playwright").Frame | import("playwright").Page = portalFrame ?? page
+
+  // After login, re-detect which frame has the dashboard (may need to wait for it)
+  const pollDeadline = Date.now() + 20000
+  while (Date.now() < pollDeadline) {
+    await page.waitForTimeout(1000)
+    for (const f of page.frames()) {
+      const u = f.url()
+      if (u.includes("portal") || u.includes("Site2") || u.includes("invoicecloud")) {
+        try {
+          if ((await f.locator('text="My Account"').count()) > 0 || (await f.locator('text="View or Pay Open Invoices"').count()) > 0 || (await f.locator('text="View Invoice"').count()) > 0) {
+            activeCtx = f
+            break
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+    if (activeCtx !== (portalFrame ?? page)) break
+    try {
+      if ((await page.locator('text="My Account"').count()) > 0 || (await page.locator('text="View or Pay Open Invoices"').count()) > 0 || (await page.locator('text="View Invoice"').count()) > 0) {
+        activeCtx = page
+        break
+      }
+    } catch {}
+  }
+
+  const loc = (selector: string) => (activeCtx === page ? (activeCtx as import("playwright").Page).locator(selector) : (activeCtx as import("playwright").Frame).locator(selector))
 
   // My Account dropdown
   const myAccount = loc('text="My Account"').first()
   if ((await myAccount.count()) > 0) {
     await myAccount.click()
-    await page.waitForTimeout(2000)
+    await page.waitForTimeout(2500)
   }
 
   // "View or Pay Open Invoices"
   const viewOrPay = loc('text="View or Pay Open Invoices"').first()
   if ((await viewOrPay.count()) > 0) {
     await viewOrPay.click()
-    await page.waitForTimeout(5000)
+    await page.waitForTimeout(6000)
   }
 
   const bills: FetchedBill[] = []
-  const bodyText = await (ctx === page ? (ctx as import("playwright").Page).locator("body") : (ctx as import("playwright").Frame).locator("body")).innerText()
+  const bodyText = await (activeCtx === page ? (activeCtx as import("playwright").Page).locator("body") : (activeCtx as import("playwright").Frame).locator("body")).innerText()
   const accountOnPage = bodyText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || bodyText.match(/#\s*(\d{4,})/i)
   const pageAccountNumber = accountOnPage ? accountOnPage[1]!.trim() : ""
 
@@ -292,12 +281,15 @@ async function scrapeBillsFromPortal(
     }
   }
 
-  if (bills.length === 0 && process.env.ESCONDIDO_DEBUG === "1") {
+  if (bills.length === 0) {
     try {
       await page.screenshot({ path: "debug-escondido.png", fullPage: true })
-      console.error("Debug: saved screenshot to debug-escondido.png")
+      const html = await page.content()
+      const fs = await import("fs")
+      fs.writeFileSync("debug-escondido.html", html, "utf8")
+      console.error("Debug: saved debug-escondido.png and debug-escondido.html (0 bills found)")
     } catch (e) {
-      console.error("Debug screenshot failed:", e)
+      console.error("Debug save failed:", e)
     }
   }
 
@@ -322,7 +314,15 @@ export async function runEscondidoBillFetch(options?: {
   if (options?.browserWSEndpoint) {
     browser = await chromium.connectOverCDP(options.browserWSEndpoint)
   } else {
-    browser = await chromium.launch({ headless: true })
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+      ],
+    })
   }
 
   const errors: string[] = []
