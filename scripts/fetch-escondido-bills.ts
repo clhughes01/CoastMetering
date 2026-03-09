@@ -133,12 +133,18 @@ async function scrapeBillsFromPortal(
   // 2) Wait for email input and log in
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
-  const submitBtn = loc('button[type="submit"], input[type="submit"], button:has-text("Sign In")').first()
 
   await emailInput.waitFor({ state: "visible", timeout: 15000 })
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
-  await submitBtn.click()
+
+  // Submit: try click on submit control, else press Enter (form often submits on Enter)
+  const submitBtn = loc('button[type="submit"], input[type="submit"], input[type="image"], button:has-text("Sign In"), input[value*="Sign" i], a:has-text("Sign In")').first()
+  try {
+    await submitBtn.click({ timeout: 5000 })
+  } catch {
+    await passwordInput.press("Enter")
+  }
   await page.waitForTimeout(8000)
 
   // 3) After login: click My Account then View or Pay Open Invoices (all in same frame)
