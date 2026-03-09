@@ -75,7 +75,7 @@ function normalizeDate(s: string): string {
 
 /**
  * Scrape bills from the Invoice Cloud portal after login.
- * Flow: Login → My Account dropdown → View or pay open invoices → parse account # and each bill (View invoice = PDF).
+ * Flow: Login → My Account dropdown → "View or Pay Open Invoices" → parse each "View Invoice" button/row.
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
@@ -97,44 +97,41 @@ async function scrapeBillsFromPortal(
     await page.waitForTimeout(3000)
   }
 
-  // My Account dropdown → View or pay open invoices
-  const myAccount = page.getByText(/my account/i).first()
+  // My Account dropdown
+  const myAccount = page.getByText("My Account", { exact: true }).first()
   if ((await myAccount.count()) > 0) {
     await myAccount.click()
-    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1500)
   }
 
-  const viewInvoices = page.getByRole("link", { name: /view.*open invoices|pay open invoices|open invoices/i }).first()
-  if ((await viewInvoices.count()) > 0) {
-    await viewInvoices.click()
+  // "View or Pay Open Invoices" — can be a link or button
+  const viewOrPay = page.getByText("View or Pay Open Invoices", { exact: true }).first()
+  if ((await viewOrPay.count()) > 0) {
+    await viewOrPay.click()
     await page.waitForTimeout(4000)
-  } else {
-    // Try by text anywhere
-    const viewPay = page.locator('a:has-text("View"), a:has-text("Pay"), a:has-text("Invoices")').first()
-    if ((await viewPay.count()) > 0) {
-      await viewPay.click()
-      await page.waitForTimeout(2000)
-    }
   }
 
   const bills: FetchedBill[] = []
 
-  // Account number on page (heading or label)
   const bodyText = await page.locator("body").innerText()
   const accountOnPage = bodyText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || bodyText.match(/#\s*(\d{4,})/i)
   const pageAccountNumber = accountOnPage ? accountOnPage[1]!.trim() : ""
 
-  // Find "View invoice" links (each = one bill, and we get the PDF URL from the link)
-  const viewInvoiceLinks = page.locator('a:has-text("View invoice"), a:has-text("View Invoice"), a:has-text("view invoice")')
+  // "View Invoice" — blue button (or link); each one = one bill
+  const viewInvoiceButtons = page.getByRole("button", { name: "View Invoice" })
+  const viewInvoiceLinks = page.getByRole("link", { name: "View Invoice" })
+  const buttonCount = await viewInvoiceButtons.count()
   const linkCount = await viewInvoiceLinks.count()
+  const totalViewInvoice = buttonCount + linkCount
 
-  if (linkCount > 0) {
-    for (let i = 0; i < linkCount; i++) {
-      const link = viewInvoiceLinks.nth(i)
-      const href = (await link.getAttribute("href")) || ""
+  if (totalViewInvoice > 0) {
+    for (let i = 0; i < totalViewInvoice; i++) {
+      const isButton = i < buttonCount
+      const el = isButton ? viewInvoiceButtons.nth(i) : viewInvoiceLinks.nth(i - buttonCount)
+      const href = !isButton ? ((await el.getAttribute("href")) || "") : ""
       const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
-      const row = link.locator("xpath=ancestor::tr | xpath=ancestor::div[contains(@class,\"row\")] | xpath=ancestor::li").first()
-      const rowText = (await row.count()) > 0 ? await row.innerText() : await page.locator("body").innerText()
+      const row = el.locator("xpath=ancestor::tr | xpath=ancestor::div[contains(@class,'row')] | xpath=ancestor::li | xpath=ancestor::*[contains(@class,'invoice') or contains(@class,'bill')]").first()
+      const rowText = (await row.count()) > 0 ? await row.innerText() : bodyText
       const amountMatch = rowText.match(/\$[\d,]+\.?\d*/)
       const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
       const dateMatch = rowText.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
@@ -156,7 +153,36 @@ async function scrapeBillsFromPortal(
     }
   }
 
-  // Fallback: table with tbody tr
+  // Fallback: any clickable with exact text "View Invoice"
+  if (bills.length === 0) {
+    const anyViewInvoice = page.locator('button:has-text("View Invoice"), a:has-text("View Invoice")')
+    const count = await anyViewInvoice.count()
+    for (let i = 0; i < count; i++) {
+      const el = anyViewInvoice.nth(i)
+      const href = (await el.getAttribute("href")) || ""
+      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
+      const row = el.locator("xpath=ancestor::tr").first()
+      const rowText = (await row.count()) > 0 ? await row.innerText() : bodyText
+      const amountMatch = rowText.match(/\$[\d,]+\.?\d*/)
+      const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
+      const dateMatch = rowText.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
+      const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
+      const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
+      const accountMatch = rowText.match(/#\s*(\d{4,})/i)
+      const accountNumber = accountMatch ? accountMatch[1]!.trim() : pageAccountNumber
+      bills.push({
+        accountNumber,
+        periodStart,
+        periodEnd,
+        amountDue: amount,
+        dueDate: dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null,
+        externalId: href ? href.slice(0, 500) : null,
+        pdfUrl,
+      })
+    }
+  }
+
+  // Fallback: table rows
   if (bills.length === 0) {
     const table = page.locator("table").first()
     const rows = table.locator("tbody tr")
@@ -164,15 +190,14 @@ async function scrapeBillsFromPortal(
     for (let i = 0; i < rowCount; i++) {
       const row = rows.nth(i)
       const text = await row.innerText()
-      const accountMatch = text.match(/account\s*#?\s*(\d+)/i) || text.match(/#\s*(\d{4,})/i)
+      const accountMatch = text.match(/#\s*(\d{4,})/i)
       const accountNumber = accountMatch ? accountMatch[1]! : pageAccountNumber
       const amountMatch = text.match(/\$[\d,]+\.?\d*/)
       const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
       const dateMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
       const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
       const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
-      const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
-      const viewLink = row.locator('a[href*="invoice"], a[href*="pdf"], a:has-text("View")').first()
+      const viewLink = row.locator('a[href*="invoice"], a[href*="pdf"], a:has-text("View"), button:has-text("View")').first()
       const href = (await viewLink.getAttribute("href")) || null
       const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
       bills.push({
@@ -180,7 +205,7 @@ async function scrapeBillsFromPortal(
         periodStart,
         periodEnd,
         amountDue: amount,
-        dueDate,
+        dueDate: dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null,
         externalId: href ? href.slice(0, 500) : null,
         pdfUrl,
       })
