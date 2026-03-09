@@ -83,21 +83,51 @@ async function scrapeBillsFromPortal(
   loginPassword: string
 ): Promise<FetchedBill[]> {
   await page.goto(PORTAL_URL, { waitUntil: "load", timeout: 60000 })
+  await page.waitForTimeout(2000)
 
-  // Login — form is usually on main page or in first iframe
-  const emailSel = 'input[type="email"], input[name*="email"], input[id*="email"], input[type="text"]'
+  // Invoice Cloud: "Sign In" must be clicked first to show the email/password form.
+  // Try main page then every frame (portal content is often in an iframe).
+  const clickSignIn = async (ctx: import("playwright").Page | import("playwright").Frame) => {
+    const btn = (ctx as import("playwright").Frame).locator('a:has-text("Sign In"), button:has-text("Sign In")').first()
+    if ((await btn.count()) > 0) {
+      await btn.click()
+      await page.waitForTimeout(2500)
+      return true
+    }
+    return false
+  }
+  let signInClicked = await clickSignIn(page)
+  if (!signInClicked) {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue
+      try {
+        if (await clickSignIn(frame)) {
+          signInClicked = true
+          break
+        }
+      } catch {
+        continue
+      }
+    }
+  }
+
+  // Wait for login form: "Email Address" and "Invoice Cloud Password"
+  const emailSel = 'input[type="email"], input[name*="email"], input[id*="email"], input[placeholder*="mail" i], input[type="text"]'
   const passwordSel = 'input[type="password"], input[name*="password"]'
-  const submitSel = 'button[type="submit"], input[type="submit"], button:has-text("Sign In"), a:has-text("Sign In"), input[type="image"]'
+  const submitSel = 'button[type="submit"], input[type="submit"], button:has-text("Sign In"), input[type="image"]'
 
   let didLogin = false
-  const emailOnPage = page.locator(emailSel).first()
-  if ((await emailOnPage.count()) > 0) {
-    await emailOnPage.fill(loginEmail)
-    await page.locator(passwordSel).first().fill(loginPassword)
-    await page.locator(submitSel).first().click()
-    didLogin = true
-  }
-  if (!didLogin) {
+  // Wait up to 5s for email field to appear (form may render after Sign In click)
+  for (let w = 0; w < 10; w++) {
+    await page.waitForTimeout(500)
+    const emailOnPage = page.locator(emailSel).first()
+    if ((await emailOnPage.count()) > 0) {
+      await emailOnPage.fill(loginEmail)
+      await page.locator(passwordSel).first().fill(loginPassword)
+      await page.locator(submitSel).first().click()
+      didLogin = true
+      break
+    }
     for (const frame of page.frames()) {
       if (frame === page.mainFrame()) continue
       try {
@@ -113,6 +143,7 @@ async function scrapeBillsFromPortal(
         continue
       }
     }
+    if (didLogin) break
   }
   if (didLogin) {
     await page.waitForTimeout(6000)
