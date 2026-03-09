@@ -3,8 +3,8 @@
  * Logs into https://www.invoicecloud.com/escondidoca, scrapes the bill list,
  * and inserts new bills into utility_provider_bills.
  *
- * Run with: npx tsx scripts/fetch-escondido-bills.ts
- * Or from a cron worker / GitHub Action that has Playwright installed.
+ * Run: npx tsx scripts/fetch-escondido-bills.ts
+ * Watch locally (see the browser): ESCONDIDO_WATCH=1 npm run fetch-escondido-bills
  *
  * Required env:
  *   ESCONDIDO_LOGIN_EMAIL, ESCONDIDO_LOGIN_PASSWORD
@@ -149,28 +149,29 @@ async function scrapeBillsFromPortal(
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
 
-  // Submit: click the form's Sign In. First is nav link, second is form button — use getByRole then fallbacks
+  // Submit: click the form's Sign In button. Do NOT click the nav "Sign In" link (only one match = nav).
   let submitted = false
 
   try {
     const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
     await btnByRole.waitFor({ state: "visible", timeout: 5000 })
     await btnByRole.click()
-    log("Clicked submit (getByRole button Sign In)")
+    log("Clicked submit (getByRole button)")
     submitted = true
   } catch {
     // not a native button
   }
 
   if (!submitted) {
+    const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
     try {
-      const inForm = loc("form").locator('input[type="submit"], input[type="image"], button').first()
-      await inForm.waitFor({ state: "visible", timeout: 5000 })
-      await inForm.click()
-      log("Clicked submit (form input/button)")
+      const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
+      await submitInForm.waitFor({ state: "visible", timeout: 5000 })
+      await submitInForm.click()
+      log("Clicked submit (form containing password → submit control)")
       submitted = true
     } catch {
-      // no form submit in form
+      //
     }
   }
 
@@ -182,11 +183,8 @@ async function scrapeBillsFromPortal(
         await allSignIn.nth(1).click()
         log("Clicked submit (second Sign In element)")
         submitted = true
-      } else if (n === 1) {
-        await allSignIn.first().click()
-        log("Clicked submit (only Sign In element)")
-        submitted = true
       }
+      // do NOT click when n === 1: that's the nav link, not the form button
     } catch {
       //
     }
@@ -337,8 +335,10 @@ export async function runEscondidoBillFetch(options?: {
     browser = await chromium.connectOverCDP(options.browserWSEndpoint)
   } else {
     const headless = process.env.PLAYWRIGHT_HEADED !== "1"
+    const watch = process.env.ESCONDIDO_WATCH === "1"
     browser = await chromium.launch({
-      headless,
+      headless: watch ? false : headless,
+      slowMo: watch ? 800 : 0,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -347,6 +347,7 @@ export async function runEscondidoBillFetch(options?: {
         "--window-size=1280,720",
       ],
     })
+    if (watch) log("Watch mode: browser visible, actions slowed so you can see each step.")
   }
 
   const errors: string[] = []
@@ -411,6 +412,9 @@ export async function runEscondidoBillFetch(options?: {
 
 async function main() {
   console.log("Starting Escondido bill fetch...")
+  if (process.env.ESCONDIDO_WATCH === "1") {
+    console.log("Tip: ESCONDIDO_WATCH=1 shows the browser and slows actions. Run locally to watch the bot.")
+  }
   try {
     const result = await runEscondidoBillFetch()
     console.log(`Inserted ${result.inserted} bill(s).`)
