@@ -5,13 +5,15 @@
  *
  * Run: npx tsx scripts/fetch-escondido-bills.ts
  * Watch locally (see the browser): ESCONDIDO_WATCH=1 npm run fetch-escondido-bills
+ * (Loads .env from project root so you don't need to pass credentials.)
  *
- * Required env:
+ * Required env (or in .env):
  *   ESCONDIDO_LOGIN_EMAIL, ESCONDIDO_LOGIN_PASSWORD
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *   Property-to-account mapping: property_utility_accounts table in Supabase,
  *   or ESCONDIDO_PROPERTY_ACCOUNTS='{"property-uuid":"account-number",...}'
  */
+import "dotenv/config"
 
 import { chromium } from "playwright"
 import { createClient } from "@supabase/supabase-js"
