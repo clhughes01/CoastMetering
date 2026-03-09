@@ -73,124 +73,128 @@ function normalizeDate(s: string): string {
   return `${year}-${month}-${day}`
 }
 
+const log = (msg: string) => console.log(`[Escondido] ${msg}`)
+
 /**
  * Get the frame that contains the Invoice Cloud portal (main frame after redirect or iframe).
  */
 async function getPortalFrame(page: import("playwright").Page): Promise<import("playwright").Frame> {
+  log("Resolving portal frame...")
   for (let i = 0; i < 60; i++) {
     await page.waitForTimeout(500)
     const url = page.url()
     if (url.includes("portal") || url.includes("Site2")) {
+      log(`Using main frame (url has portal/Site2)`)
       return page.mainFrame()
     }
     for (const f of page.frames()) {
       if (f !== page.mainFrame()) {
         const u = f.url()
         if (u.includes("portal") || u.includes("Site2") || u.includes("invoicecloud")) {
+          log(`Using iframe (url has portal/invoicecloud)`)
           return f
         }
       }
     }
   }
-  // Fallback: use frame that contains "Sign In" (portal may be same-origin without portal in URL)
   for (const f of page.frames()) {
     try {
       if ((await f.locator('a:has-text("Sign In"), button:has-text("Sign In")').count()) > 0) {
+        log("Using frame that contains Sign In")
         return f
       }
     } catch {
       continue
     }
   }
+  log("Using main frame (fallback)")
   return page.mainFrame()
 }
 
 /**
  * Scrape bills from the Invoice Cloud portal.
- * Flow: resolve portal frame → click Sign In → fill login → submit → My Account → View or Pay Open Invoices → parse View Invoice rows.
+ * Real flow (from UI): Landing → Sign In link → Login form → Dashboard → "Pay My Invoices" → Open Invoices table.
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
   loginEmail: string,
   loginPassword: string
 ): Promise<FetchedBill[]> {
+  log("Loading portal...")
   await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 60000 })
   await page.waitForTimeout(3000)
+  log(`Page URL: ${page.url()}`)
 
   const frame = await getPortalFrame(page)
   const loc = (sel: string) => frame.locator(sel)
 
-  // 1) Click "Sign In" to reveal the login form
-  const signInLink = loc('a:has-text("Sign In"), button:has-text("Sign In"), [role="link"]:has-text("Sign In")').first()
+  // 1) Click "Sign In" link (top right) to open login form
+  log("Looking for Sign In link...")
+  const signInLink = loc('a:has-text("Sign In")').first()
   try {
     await signInLink.waitFor({ state: "visible", timeout: 10000 })
     await signInLink.click()
+    log("Clicked Sign In link")
     await page.waitForTimeout(2000)
-  } catch {
-    // may already be visible
+  } catch (e) {
+    log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Wait for email input and log in
+  // 2) Fill login form and submit
+  log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
-
   await emailInput.waitFor({ state: "visible", timeout: 15000 })
+  log("Filling login...")
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
-
-  // Submit: try click on submit control, else press Enter (form often submits on Enter)
-  const submitBtn = loc('button[type="submit"], input[type="submit"], input[type="image"], button:has-text("Sign In"), input[value*="Sign" i], a:has-text("Sign In")').first()
+  const submitBtn = loc('button:has-text("Sign In"), input[type="submit"], input[type="image"]').first()
   try {
     await submitBtn.click({ timeout: 5000 })
+    log("Clicked Sign In button")
   } catch {
     await passwordInput.press("Enter")
+    log("Submitted via Enter")
   }
   await page.waitForTimeout(8000)
+  log(`After login URL: ${page.url()}`)
 
-  // 3) After login: click My Account then View or Pay Open Invoices (all in same frame)
-  const myAccount = loc('text="My Account"').first()
+  // 3) Dashboard: click "Pay My Invoices" to open Open Invoices page (not My Account dropdown)
+  log("Looking for Pay My Invoices...")
+  const payInvoicesBtn = loc('button:has-text("Pay My Invoices"), a:has-text("Pay My Invoices")').first()
   try {
-    await myAccount.waitFor({ state: "visible", timeout: 20000 })
-    await myAccount.click()
-    await page.waitForTimeout(3000)
-  } catch {}
-
-  const viewOrPay = loc('text="View or Pay Open Invoices"').first()
-  try {
-    await viewOrPay.waitFor({ state: "visible", timeout: 10000 })
-    await viewOrPay.click()
-    await page.waitForTimeout(6000)
-  } catch {}
+    await payInvoicesBtn.waitFor({ state: "visible", timeout: 15000 })
+    await payInvoicesBtn.click()
+    log("Clicked Pay My Invoices")
+    await page.waitForTimeout(5000)
+  } catch (e) {
+    log(`Pay My Invoices: ${e instanceof Error ? e.message : String(e)}`)
+  }
 
   const bills: FetchedBill[] = []
   const bodyText = await frame.locator("body").innerText()
-  const pageAccountNumber = (bodyText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || bodyText.match(/#\s*(\d{4,})/i))?.[1]?.trim() ?? ""
 
-  // 4) Find "View Invoice" buttons/links and parse each row
-  const viewInvoiceSelectors = [
-    'a:has-text("View Invoice")',
-    'button:has-text("View Invoice")',
-    '[role="button"]:has-text("View Invoice")',
-    '[role="link"]:has-text("View Invoice")',
-  ]
-  let viewInvoiceEls = frame.locator(viewInvoiceSelectors.join(", "))
-  const count = await viewInvoiceEls.count()
+  // 4) Open Invoices page: find every "View Invoice" link and parse its table row
+  log("Looking for View Invoice links...")
+  const viewInvoiceLinks = loc('a:has-text("View Invoice")')
+  const linkCount = await viewInvoiceLinks.count()
+  log(`Found ${linkCount} View Invoice link(s)`)
 
-  if (count > 0) {
-    for (let i = 0; i < count; i++) {
-      const el = viewInvoiceEls.nth(i)
+  if (linkCount > 0) {
+    for (let i = 0; i < linkCount; i++) {
+      const el = viewInvoiceLinks.nth(i)
       const href = (await el.getAttribute("href")) ?? ""
       const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
-      const row = el.locator("xpath=ancestor::tr[1]").first()
+      const row = el.locator("xpath=ancestor::tr[1]")
       const rowText = (await row.count()) > 0 ? await row.innerText() : bodyText
+      const accountMatch = rowText.match(/account\s*#?\s*(\d{4,})/i) || rowText.match(/#\s*(\d{4,})/i)
+      const accountNumber = accountMatch ? accountMatch[1]!.trim() : ""
       const amountMatch = rowText.match(/\$[\d,]+\.?\d*/)
       const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
       const dateMatch = rowText.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
       const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
       const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
       const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
-      const accountMatch = rowText.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || rowText.match(/#\s*(\d{4,})/i)
-      const accountNumber = accountMatch ? accountMatch[1]!.trim() : pageAccountNumber
       bills.push({
         accountNumber,
         periodStart,
@@ -200,49 +204,64 @@ async function scrapeBillsFromPortal(
         externalId: href ? href.slice(0, 500) : null,
         pdfUrl,
       })
+      log(`  Bill ${i + 1}: account=${accountNumber} period=${periodStart} amount=$${amount}`)
+    }
+  }
+
+  // 5) Fallback: parse any table with $ amounts and account # (e.g. Recent Open Invoices on dashboard)
+  if (bills.length === 0) {
+    log("Trying table fallback...")
+    const tables = frame.locator("table")
+    const tableCount = await tables.count()
+    log(`Tables found: ${tableCount}`)
+    for (let t = 0; t < tableCount; t++) {
+      const table = tables.nth(t)
+      const rows = table.locator("tbody tr")
+      const rowCount = await rows.count()
+      for (let i = 0; i < rowCount; i++) {
+        const row = rows.nth(i)
+        const text = await row.innerText()
+        if (!text.includes("$") || text.length < 5) continue
+        const accountMatch = text.match(/account\s*#?\s*(\d{4,})/i) || text.match(/#\s*(\d{4,})/i)
+        const accountNumber = accountMatch ? accountMatch[1]! : ""
+        const amountMatch = text.match(/\$[\d,]+\.?\d*/)
+        const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
+        const dateMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
+        const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
+        const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
+        const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
+        const viewLink = row.locator('a:has-text("View Invoice"), a:has-text("View")').first()
+        const href = (await viewLink.getAttribute("href").catch(() => null)) ?? null
+        const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
+        bills.push({
+          accountNumber,
+          periodStart,
+          periodEnd,
+          amountDue: amount,
+          dueDate,
+          externalId: href ? href.slice(0, 500) : null,
+          pdfUrl,
+        })
+      }
+      if (bills.length > 0) {
+        log(`Parsed ${bills.length} bills from table`)
+        break
+      }
     }
   }
 
   if (bills.length === 0) {
-    const table = loc("table").first()
-    const rows = table.locator("tbody tr")
-    const rowCount = await rows.count()
-    for (let i = 0; i < rowCount; i++) {
-      const row = rows.nth(i)
-      const text = await row.innerText()
-      const accountMatch = text.match(/#\s*(\d{4,})/i)
-      const accountNumber = accountMatch ? accountMatch[1]! : pageAccountNumber
-      const amountMatch = text.match(/\$[\d,]+\.?\d*/)
-      const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
-      const dateMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
-      const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
-      const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
-      const viewLink = row.locator('a[href*="invoice"], a[href*="pdf"], a:has-text("View"), button:has-text("View")').first()
-      const href = (await viewLink.getAttribute("href")) ?? null
-      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
-      bills.push({
-        accountNumber,
-        periodStart,
-        periodEnd,
-        amountDue: amount,
-        dueDate: dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null,
-        externalId: href ? href.slice(0, 500) : null,
-        pdfUrl,
-      })
-    }
-  }
-
-  if (bills.length === 0) {
+    log("Saving debug screenshot and HTML...")
     try {
       await page.screenshot({ path: "debug-escondido.png", fullPage: true })
       const fs = await import("fs")
       fs.writeFileSync("debug-escondido.html", await page.content(), "utf8")
-      console.error("Debug: saved debug-escondido.png and debug-escondido.html (0 bills)")
     } catch (e) {
-      console.error("Debug save failed:", e)
+      log(`Debug save failed: ${e}`)
     }
   }
 
+  log(`Done. Parsed ${bills.length} bill(s).`)
   return bills
 }
 
