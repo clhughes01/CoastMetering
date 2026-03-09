@@ -140,7 +140,7 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Fill login form and submit — must click the form's Sign In button (Enter often doesn't submit on this site)
+  // 2) Fill login form and submit — must click the form's Sign In button (Enter doesn't submit on this site)
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
@@ -149,32 +149,56 @@ async function scrapeBillsFromPortal(
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
 
-  // Submit: find button inside the form (not the header "Sign In" link) — try multiple selectors
-  const submitSelectors = [
-    'form button:has-text("Sign In")',
-    'form input[type="submit"]',
-    'form input[type="image"]',
-    'button:has-text("Sign In")',
-    'input[type="submit"]',
-    'input[type="image"]',
-    '[type="submit"]',
-  ]
+  // Submit: click the form's Sign In. First is nav link, second is form button — use getByRole then fallbacks
   let submitted = false
-  for (const sel of submitSelectors) {
+
+  try {
+    const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
+    await btnByRole.waitFor({ state: "visible", timeout: 5000 })
+    await btnByRole.click()
+    log("Clicked submit (getByRole button Sign In)")
+    submitted = true
+  } catch {
+    // not a native button
+  }
+
+  if (!submitted) {
     try {
-      const btn = loc(sel).first()
-      await btn.waitFor({ state: "visible", timeout: 3000 })
-      await btn.click()
-      log(`Clicked submit (${sel})`)
+      const inForm = loc("form").locator('input[type="submit"], input[type="image"], button').first()
+      await inForm.waitFor({ state: "visible", timeout: 5000 })
+      await inForm.click()
+      log("Clicked submit (form input/button)")
       submitted = true
-      break
     } catch {
-      continue
+      // no form submit in form
     }
   }
+
   if (!submitted) {
-    log("Trying Enter key...")
-    await passwordInput.press("Enter")
+    try {
+      const allSignIn = loc('a:has-text("Sign In"), button:has-text("Sign In"), input[value*="Sign" i], [role="button"]:has-text("Sign In")')
+      const n = await allSignIn.count()
+      if (n >= 2) {
+        await allSignIn.nth(1).click()
+        log("Clicked submit (second Sign In element)")
+        submitted = true
+      } else if (n === 1) {
+        await allSignIn.first().click()
+        log("Clicked submit (only Sign In element)")
+        submitted = true
+      }
+    } catch {
+      //
+    }
+  }
+
+  if (!submitted) {
+    try {
+      await passwordInput.press("Enter")
+      log("Submitted via Enter (fallback)")
+    } catch {
+      log("Could not submit form")
+    }
   }
 
   // Wait for navigation away from login page (customerlogin.aspx → dashboard)
