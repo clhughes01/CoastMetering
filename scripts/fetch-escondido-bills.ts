@@ -94,6 +94,41 @@ async function getRecaptchaV2Params(
   })
 }
 
+/**
+ * Lenient v2 site key lookup for when checkbox challenge is shown but strict v2 lookup failed.
+ * Tries: [data-sitekey] (any), script src with recaptcha and k= or render=, iframe src with k=.
+ */
+async function getRecaptchaV2ParamsLenient(
+  frame: import("playwright").Frame
+): Promise<{ siteKey: string } | null> {
+  const strict = await getRecaptchaV2Params(frame)
+  if (strict) return strict
+  return frame.evaluate(() => {
+    const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
+    if (withKey) {
+      const key = withKey.getAttribute("data-sitekey")
+      if (key) return { siteKey: key }
+    }
+    for (const s of Array.from(document.scripts)) {
+      const src = s.getAttribute("src") || ""
+      if (!/recaptcha|google\.com|recaptcha\.net/i.test(src)) continue
+      const k = src.match(/[\?&]k=([^&]+)/)
+      if (k) return { siteKey: k[1]! }
+      const render = src.match(/[\?&]render=([^&]+)/)
+      if (render) return { siteKey: render[1]! }
+    }
+    for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
+      const src = iframe.getAttribute("src") || ""
+      const k = src.match(/[\?&]k=([^&]+)/)
+      if (k) return { siteKey: k[1]! }
+    }
+    const html = document.documentElement.outerHTML
+    const longKey = html.match(/['"]?(6L[\w\-]{20,})['"]?/)
+    if (longKey) return { siteKey: longKey[1]! }
+    return null
+  })
+}
+
 /** Get reCAPTCHA v3 params only (script render= or div with data-action). */
 async function getRecaptchaV3Params(
   frame: import("playwright").Frame
@@ -365,9 +400,12 @@ async function scrapeBillsFromPortal(
       log("Checkbox challenge shown; re-entering password, solving captcha, then Sign In again...")
       await passwordInput.fill(loginPassword)
       await page.waitForTimeout(1000)
-      const v2Params = await getRecaptchaV2Params(frame)
+      let v2Params = await getRecaptchaV2ParamsLenient(frame)
+      if (!v2Params && frame !== page.mainFrame()) {
+        v2Params = await getRecaptchaV2ParamsLenient(page.mainFrame())
+      }
       if (v2Params) {
-        log("Solving reCAPTCHA v2 via 2Captcha...")
+        log(`Solving reCAPTCHA v2 via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
         const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), v2Params.siteKey, true)
         if (token) {
           await injectRecaptchaToken(frame, token)
