@@ -209,6 +209,20 @@ async function scrapeBillsFromPortal(
     log(`Navigated to: ${page.url()}`)
   } catch {
     log(`Still on: ${page.url()}`)
+    // Retry submit once (helps in CI where first click may not register)
+    if (page.url().includes("customerlogin")) {
+      log("Retrying form submit...")
+      try {
+        const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
+        const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
+        await submitInForm.waitFor({ state: "visible", timeout: 8000 })
+        await submitInForm.click()
+        await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 20000 })
+        log(`After retry: ${page.url()}`)
+      } catch (e) {
+        log(`Retry failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
   }
   await page.waitForTimeout(4000)
   log(`After login URL: ${page.url()}`)

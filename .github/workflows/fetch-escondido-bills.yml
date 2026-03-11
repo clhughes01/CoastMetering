@@ -15,9 +15,9 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx playwright install chromium --with-deps
-      - run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm run fetch-escondido-bills
+      - name: Fetch Escondido bills
+        run: npm run fetch-escondido-bills
         env:
-          PLAYWRIGHT_HEADED: "1"
           ESCONDIDO_LOGIN_EMAIL: ${{ secrets.ESCONDIDO_LOGIN_EMAIL }}
           ESCONDIDO_LOGIN_PASSWORD: ${{ secrets.ESCONDIDO_LOGIN_PASSWORD }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
