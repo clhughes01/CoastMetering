@@ -170,7 +170,11 @@ async function scrapeBillsFromPortal(
     try {
       const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
       await submitInForm.waitFor({ state: "visible", timeout: 12000 })
-      await submitInForm.click()
+      // Wait for navigation in parallel with click (so we don't check URL before nav completes)
+      await Promise.all([
+        page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 }),
+        submitInForm.click(),
+      ])
       log("Clicked submit (form containing password → submit control)")
       submitted = true
     } catch {
@@ -386,6 +390,7 @@ export async function runEscondidoBillFetch(options?: {
 
   try {
     const page = await browser.newPage()
+    await page.setViewportSize({ width: 1280, height: 720 })
     const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword)
 
     console.log(`Scraped ${bills.length} bill(s) from portal. Property mapping has ${accountToProperty.size} account(s).`)
