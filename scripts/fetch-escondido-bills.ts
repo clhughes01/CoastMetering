@@ -80,27 +80,49 @@ function normalizeDate(s: string): string {
 
 const log = (msg: string) => console.log(`[Escondido] ${msg}`)
 
-/** Extract reCAPTCHA site key, action, and version (v2 checkbox vs v3) from the page. */
-async function getRecaptchaParams(
+/** Get reCAPTCHA v2 params only (div with data-sitekey, no data-action). */
+async function getRecaptchaV2Params(
   frame: import("playwright").Frame
-): Promise<{ siteKey: string; action?: string; version: "v2" | "v3" } | null> {
+): Promise<{ siteKey: string } | null> {
+  return frame.evaluate(() => {
+    const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
+    if (!withKey) return null
+    const key = withKey.getAttribute("data-sitekey")
+    const action = withKey.getAttribute("data-action")
+    if (key && !action) return { siteKey: key }
+    return null
+  })
+}
+
+/** Get reCAPTCHA v3 params only (script render= or div with data-action). */
+async function getRecaptchaV3Params(
+  frame: import("playwright").Frame
+): Promise<{ siteKey: string; action?: string } | null> {
   return frame.evaluate(() => {
     const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
     if (withKey) {
       const key = withKey.getAttribute("data-sitekey")
       const action = withKey.getAttribute("data-action") ?? undefined
-      if (key) {
-        const version = action ? "v3" : "v2"
-        return { siteKey: key, action, version }
-      }
+      if (key && action) return { siteKey: key, action }
     }
     for (const s of Array.from(document.scripts)) {
       const src = s.getAttribute("src") || ""
       const render = src.match(/[\?&]render=([^&]+)/)
-      if (render) return { siteKey: render[1]!, action: undefined, version: "v3" as const }
+      if (render) return { siteKey: render[1]!, action: undefined }
     }
     return null
   })
+}
+
+/** Get first available recaptcha params (v2 preferred) for retry/checkbox path. */
+async function getRecaptchaParams(
+  frame: import("playwright").Frame
+): Promise<{ siteKey: string; action?: string; version: "v2" | "v3" } | null> {
+  const v2 = await getRecaptchaV2Params(frame)
+  if (v2) return { ...v2, version: "v2" }
+  const v3 = await getRecaptchaV3Params(frame)
+  if (v3) return { ...v3, version: "v3" }
+  return null
 }
 
 /**
@@ -305,181 +327,79 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Fill login form and submit — must click the form's Sign In button (Enter doesn't submit on this site)
+  // 2) Login: email → password → Sign In (first time) → captcha appears & password cleared → re-enter password → captcha → Sign In again
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
   await emailInput.waitFor({ state: "visible", timeout: 15000 })
-  log("Filling login...")
+  log("Filling email and password...")
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(1500)
 
-  // Optional: solve reCAPTCHA via 2Captcha (v2 checkbox or v3) and inject token before submit
-  const captchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY
-  if (captchaApiKey) {
-    const params = await getRecaptchaParams(frame)
-    if (params) {
-      if (params.version === "v2") {
-        log("Solving reCAPTCHA v2 (checkbox) via 2Captcha...")
-        const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), params.siteKey, true)
-        if (token) {
-          await injectRecaptchaToken(frame, token)
-          log("Injected reCAPTCHA v2 token.")
-        } else {
-          log("2Captcha v2 did not return a token; continuing without it.")
-        }
-      } else {
-        log("Solving reCAPTCHA v3 via 2Captcha...")
-        const token = await solveRecaptchaV3With2Captcha(
-          captchaApiKey,
-          page.url(),
-          params.siteKey,
-          params.action
-        )
-        if (token) {
-          await injectRecaptchaToken(frame, token)
-          log("Injected reCAPTCHA v3 token.")
-        } else {
-          log("2Captcha v3 did not return a token; continuing without it.")
-        }
-      }
-    } else {
-      log("No reCAPTCHA site key found on page; continuing without captcha solve.")
-    }
-  }
-
-  // Submit: click the form's Sign In button (Do NOT click the nav "Sign In" link.)
-  let submitted = false
-
+  // 2a) First Sign In — triggers "please complete the checkbox challenge below" (password is cleared)
+  log("Clicking Sign In (first time) to trigger captcha...")
   try {
     const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
     await btnByRole.waitFor({ state: "visible", timeout: 8000 })
-    await Promise.all([
-      page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
-      btnByRole.click(),
-    ])
-    log("Clicked submit (getByRole button)")
-    submitted = true
+    await btnByRole.click()
   } catch {
-    //
-  }
-
-  if (!submitted) {
-    const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
     try {
+      const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
       const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
-      await submitInForm.waitFor({ state: "visible", timeout: 15000 })
-      await Promise.all([
-        page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
-        submitInForm.click({ force: true }),
-      ])
-      log("Clicked submit (form → submit control)")
-      submitted = true
+      await submitInForm.waitFor({ state: "visible", timeout: 8000 })
+      await submitInForm.click({ force: true })
     } catch {
-      //
-    }
-  }
-
-  if (!submitted) {
-    try {
-      const allSignIn = loc('a:has-text("Sign In"), button:has-text("Sign In"), input[value*="Sign" i], [role="button"]:has-text("Sign In")')
-      const n = await allSignIn.count()
-      if (n >= 2) {
-        await Promise.all([
-          page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
-          allSignIn.nth(1).click({ force: true }),
-        ])
-        log("Clicked submit (second Sign In)")
-        submitted = true
-      }
-    } catch {
-      //
-    }
-  }
-
-  // CI fallback: submit the form via JavaScript (bypasses invisible/missing button)
-  if (!submitted) {
-    try {
       const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-      if (formEl) {
-        await Promise.all([
-          page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
-          formEl.evaluate((form: HTMLFormElement) => form.submit()),
-        ])
-        log("Submitted via form.submit() (JS)")
-        submitted = true
+      if (formEl) await formEl.evaluate((form: HTMLFormElement) => form.submit())
+    }
+  }
+  await page.waitForTimeout(4000)
+
+  // 2b) If still on login with checkbox challenge: re-enter password, solve captcha, Sign In again
+  const captchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY
+  if (page.url().includes("customerlogin")) {
+    const bodyText = await frame.locator("body").innerText().catch(() => "")
+    const needsCheckbox = /checkbox\s*challenge|complete\s*the\s*checkbox/i.test(bodyText)
+    if (needsCheckbox && captchaApiKey) {
+      log("Checkbox challenge shown; re-entering password, solving captcha, then Sign In again...")
+      await passwordInput.fill(loginPassword)
+      await page.waitForTimeout(1000)
+      const v2Params = await getRecaptchaV2Params(frame)
+      if (v2Params) {
+        log("Solving reCAPTCHA v2 via 2Captcha...")
+        const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), v2Params.siteKey, true)
+        if (token) {
+          await injectRecaptchaToken(frame, token)
+          log("Injected reCAPTCHA v2 token.")
+          await page.waitForTimeout(1500)
+          try {
+            const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+            if (formEl) {
+              await Promise.all([
+                page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 }),
+                formEl.evaluate((form: HTMLFormElement) => form.submit()),
+              ])
+              log("Submitted with captcha token; leaving login.")
+            }
+          } catch (e) {
+            log(`Submit with token failed: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        } else {
+          log("2Captcha v2 did not return a token.")
+        }
+      } else {
+        log("No reCAPTCHA v2 site key found after checkbox challenge.")
       }
-    } catch {
-      //
     }
   }
 
-  if (!submitted) {
-    try {
-      await passwordInput.press("Enter")
-      log("Submitted via Enter (fallback)")
-    } catch {
-      log("Could not submit form")
-    }
-  }
-
-  // Wait for navigation away from login page (customerlogin.aspx → dashboard)
   log("Waiting for dashboard (leaving customerlogin)...")
   try {
     await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 })
     log(`Navigated to: ${page.url()}`)
   } catch {
     log(`Still on: ${page.url()}`)
-    await page.waitForTimeout(2000)
-    // If page asks for "checkbox challenge", solve reCAPTCHA v2 and submit again
-    if (page.url().includes("customerlogin") && captchaApiKey) {
-      const bodyText = await frame.locator("body").innerText().catch(() => "")
-      if (/checkbox\s*challenge|complete\s*the\s*checkbox/i.test(bodyText)) {
-        log("Page requests checkbox challenge; solving reCAPTCHA v2 and resubmitting...")
-        const params = await getRecaptchaParams(frame)
-        if (params) {
-          const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), params.siteKey, true)
-          if (token) {
-            await injectRecaptchaToken(frame, token)
-            await page.waitForTimeout(1500)
-            try {
-              const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-              if (formEl) {
-                await formEl.evaluate((form: HTMLFormElement) => form.submit())
-                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 30000 })
-                log("Resubmitted with v2 token; navigated away from login.")
-              }
-            } catch (e) {
-              log(`Resubmit after v2 failed: ${e instanceof Error ? e.message : String(e)}`)
-            }
-          }
-        }
-      }
-    }
-    // Retry submit once (helps in CI where first click may not register)
-    if (page.url().includes("customerlogin")) {
-      log("Retrying form submit...")
-      try {
-        const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
-        const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
-        await submitInForm.waitFor({ state: "visible", timeout: 8000 })
-        await submitInForm.click({ force: true })
-        await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-        log(`After retry: ${page.url()}`)
-      } catch {
-        try {
-          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-          if (formEl) {
-            await formEl.evaluate((form: HTMLFormElement) => form.submit())
-            await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-            log("Retry: submitted via form.submit()")
-          }
-        } catch (e) {
-          log(`Retry failed: ${e instanceof Error ? e.message : String(e)}`)
-        }
-      }
-    }
   }
   await page.waitForTimeout(4000)
   log(`After login URL: ${page.url()}`)
