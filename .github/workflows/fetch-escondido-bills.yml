@@ -23,7 +23,7 @@ jobs:
           ESCONDIDO_LOGIN_PASSWORD: ${{ secrets.ESCONDIDO_LOGIN_PASSWORD }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      - name: Upload debug artifacts (when 0 bills)
+      - name: Upload debug artifacts (when 0 bills or trace from CI)
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v4
@@ -32,3 +32,4 @@ jobs:
           path: |
             debug-escondido.png
             debug-escondido.html
+            trace.zip

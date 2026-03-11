@@ -418,9 +418,14 @@ export async function runEscondidoBillFetch(options?: {
   let inserted = 0
   let alreadyExisted = 0
 
+  let context: import("playwright").BrowserContext | undefined
   try {
-    const page = await browser.newPage()
-    await page.setViewportSize({ width: 1280, height: 720 })
+    context = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    if (process.env.CI) {
+      await context.tracing.start({ screenshots: true, snapshots: true })
+      log("Tracing enabled (CI): trace.zip will be saved for Playwright Trace Viewer.")
+    }
+    const page = await context.newPage()
     const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword)
 
     console.log(`Scraped ${bills.length} bill(s) from portal. Property mapping has ${accountToProperty.size} account(s).`)
@@ -481,6 +486,17 @@ export async function runEscondidoBillFetch(options?: {
     }
     console.log(`Inserted ${inserted} new bill(s).`)
   } finally {
+    if (context) {
+      if (process.env.CI) {
+        try {
+          await context.tracing.stop({ path: "trace.zip" })
+          log("Saved trace.zip — open with: npx playwright show-trace trace.zip")
+        } catch (e) {
+          log(`Trace save failed: ${e}`)
+        }
+      }
+      await context.close()
+    }
     await browser.close()
   }
 

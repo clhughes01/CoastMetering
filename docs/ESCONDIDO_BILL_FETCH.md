@@ -377,6 +377,12 @@ Downstream you can:
   - Check that `property_utility_accounts` (or `ESCONDIDO_PROPERTY_ACCOUNTS`) maps account numbers to the correct `property_id`.  
   - Inspect the portal’s bill list (table vs list of links) and update selectors in `scripts/fetch-escondido-bills.ts` if the layout changed.
 
+
+- **Works locally, fails in GitHub Actions**  
+  - In CI the script records a **Playwright trace**. After a run, download the **escondido-debug** artifact (Actions → run → Artifacts). It may contain `trace.zip`.  
+  - Open it locally: `npx playwright show-trace trace.zip`. Use the Trace Viewer to step through the run (screenshots, DOM snapshots, and action log) and see where login or navigation fails.  
+  - See [Playwright Trace Viewer](https://playwright.dev/docs/trace-viewer) and [this Stack Overflow thread](https://stackoverflow.com/questions/78915766/playwright-e2e-tests-passing-locally-but-failing-in-github-actions-with-next-js) for CI debugging tips (timing, viewport, auth detection).
+
 - **Cron returns “Run the script”**  
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
