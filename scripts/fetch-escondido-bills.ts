@@ -150,32 +150,34 @@ async function scrapeBillsFromPortal(
   log("Filling login...")
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
-  await page.waitForTimeout(1000)
+  await page.waitForTimeout(3000)
 
-  // Submit: click the form's Sign In button. Do NOT click the nav "Sign In" link (only one match = nav).
+  // Submit: click the form's Sign In button (Do NOT click the nav "Sign In" link.)
   let submitted = false
 
   try {
     const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
-    await btnByRole.waitFor({ state: "visible", timeout: 5000 })
-    await btnByRole.click()
+    await btnByRole.waitFor({ state: "visible", timeout: 8000 })
+    await Promise.all([
+      page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
+      btnByRole.click(),
+    ])
     log("Clicked submit (getByRole button)")
     submitted = true
   } catch {
-    // not a native button
+    //
   }
 
   if (!submitted) {
     const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
     try {
       const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
-      await submitInForm.waitFor({ state: "visible", timeout: 12000 })
-      // Wait for navigation in parallel with click (so we don't check URL before nav completes)
+      await submitInForm.waitFor({ state: "visible", timeout: 15000 })
       await Promise.all([
-        page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 }),
-        submitInForm.click(),
+        page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
+        submitInForm.click({ force: true }),
       ])
-      log("Clicked submit (form containing password → submit control)")
+      log("Clicked submit (form → submit control)")
       submitted = true
     } catch {
       //
@@ -187,11 +189,30 @@ async function scrapeBillsFromPortal(
       const allSignIn = loc('a:has-text("Sign In"), button:has-text("Sign In"), input[value*="Sign" i], [role="button"]:has-text("Sign In")')
       const n = await allSignIn.count()
       if (n >= 2) {
-        await allSignIn.nth(1).click()
-        log("Clicked submit (second Sign In element)")
+        await Promise.all([
+          page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
+          allSignIn.nth(1).click({ force: true }),
+        ])
+        log("Clicked submit (second Sign In)")
         submitted = true
       }
-      // do NOT click when n === 1: that's the nav link, not the form button
+    } catch {
+      //
+    }
+  }
+
+  // CI fallback: submit the form via JavaScript (bypasses invisible/missing button)
+  if (!submitted) {
+    try {
+      const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+      if (formEl) {
+        await Promise.all([
+          page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 }),
+          formEl.evaluate((form: HTMLFormElement) => form.submit()),
+        ])
+        log("Submitted via form.submit() (JS)")
+        submitted = true
+      }
     } catch {
       //
     }
@@ -220,11 +241,20 @@ async function scrapeBillsFromPortal(
         const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
         const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
         await submitInForm.waitFor({ state: "visible", timeout: 8000 })
-        await submitInForm.click()
-        await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 20000 })
+        await submitInForm.click({ force: true })
+        await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
         log(`After retry: ${page.url()}`)
-      } catch (e) {
-        log(`Retry failed: ${e instanceof Error ? e.message : String(e)}`)
+      } catch {
+        try {
+          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+          if (formEl) {
+            await formEl.evaluate((form: HTMLFormElement) => form.submit())
+            await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+            log("Retry: submitted via form.submit()")
+          }
+        } catch (e) {
+          log(`Retry failed: ${e instanceof Error ? e.message : String(e)}`)
+        }
       }
     }
   }
