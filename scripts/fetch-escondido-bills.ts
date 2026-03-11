@@ -161,14 +161,15 @@ async function getRecaptchaParams(
 }
 
 /**
- * Solve reCAPTCHA v2 (checkbox / invisible) using 2Captcha API.
- * Use isInvisible: true when the checkbox is not visible (challenge appears without visible widget).
+ * Solve reCAPTCHA v2 using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2).
+ * RecaptchaV2TaskProxyless: workers solve the captcha (including image challenge); we get gRecaptchaResponse and inject it.
+ * Use isInvisible: false for visible checkbox (default); true only for invisible v2.
  */
 async function solveRecaptchaV2With2Captcha(
   apiKey: string,
   pageUrl: string,
   siteKey: string,
-  isInvisible = true
+  isInvisible = false
 ): Promise<string | null> {
   const createRes = await fetch("https://api.2captcha.com/createTask", {
     method: "POST",
@@ -299,7 +300,7 @@ async function tryClickRecaptchaCheckbox(
   return false
 }
 
-/** Inject solved reCAPTCHA token into the page so form submit includes it. */
+/** Inject solved reCAPTCHA token so form submit includes it (g-recaptcha-response + optional callback). */
 async function injectRecaptchaToken(
   frame: import("playwright").Frame,
   token: string
@@ -320,8 +321,15 @@ async function injectRecaptchaToken(
       el.value = tokenValue
       el.dispatchEvent(new Event("input", { bubbles: true }))
     }
-    const cb = (window as unknown as { ___grecaptcha_cfg?: { callback?: () => void } }).___grecaptcha_cfg?.callback
-    if (typeof cb === "function") cb()
+    const w = window as unknown as { ___grecaptcha_cfg?: { callback?: (t?: string) => void }; grecaptcha?: { getResponse?: () => string } }
+    const cb = w.___grecaptcha_cfg?.callback
+    if (typeof cb === "function") {
+      try {
+        cb(tokenValue)
+      } catch {
+        cb()
+      }
+    }
   }, token)
 }
 
@@ -419,7 +427,7 @@ async function scrapeBillsFromPortal(
   }
   await page.waitForTimeout(4000)
 
-  // 2b) If still on login with checkbox challenge: re-enter password, try click checkbox (then 2Captcha fallback), Sign In again
+  // 2b) If still on login with checkbox challenge: re-enter password, solve via 2Captcha (visible v2), inject token, submit
   const captchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY
   if (page.url().includes("customerlogin")) {
     const bodyText = await frame.locator("body").innerText().catch(() => "")
@@ -429,48 +437,24 @@ async function scrapeBillsFromPortal(
       await passwordInput.fill(loginPassword)
       await page.waitForTimeout(1000)
 
-      let passedWithClick = false
-      const clicked = await tryClickRecaptchaCheckbox(page)
-      if (clicked) {
-        await page.waitForTimeout(4000)
-        try {
-          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-          if (formEl) {
-            await Promise.all([
-              page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 }),
-              formEl.evaluate((form: HTMLFormElement) => form.submit()),
-            ])
-            log("Submitted after clicking checkbox; left login.")
-            passedWithClick = true
-          }
-        } catch {
-          log("Submit after checkbox click did not navigate (may need 2Captcha).")
-        }
-      }
-
-      if (!passedWithClick && captchaApiKey) {
-        log("Falling back to 2Captcha...")
-        await passwordInput.fill(loginPassword)
-        await page.waitForTimeout(1000)
+      if (captchaApiKey) {
         let v2Params = await getRecaptchaV2ParamsLenient(frame)
         if (!v2Params && frame !== page.mainFrame()) {
           v2Params = await getRecaptchaV2ParamsLenient(page.mainFrame())
         }
         if (v2Params) {
-          log(`Solving reCAPTCHA v2 via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
-          const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), v2Params.siteKey, true)
+          log(`Solving visible reCAPTCHA v2 via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
+          const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), v2Params.siteKey, false)
           if (token) {
             await injectRecaptchaToken(frame, token)
-            log("Injected reCAPTCHA v2 token.")
-            await page.waitForTimeout(1500)
+            log("Injected reCAPTCHA v2 token into g-recaptcha-response.")
+            await page.waitForTimeout(2000)
             try {
               const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
               if (formEl) {
-                await Promise.all([
-                  page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 }),
-                  formEl.evaluate((form: HTMLFormElement) => form.submit()),
-                ])
-                log("Submitted with captcha token; leaving login.")
+                await formEl.evaluate((form: HTMLFormElement) => form.submit())
+                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
+                log("Submitted form with captcha token; left login.")
               }
             } catch (e) {
               log(`Submit with token failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -480,6 +464,21 @@ async function scrapeBillsFromPortal(
           }
         } else {
           log("No reCAPTCHA v2 site key found after checkbox challenge.")
+        }
+      } else {
+        const clicked = await tryClickRecaptchaCheckbox(page)
+        if (clicked) {
+          await page.waitForTimeout(4000)
+          try {
+            const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+            if (formEl) {
+              formEl.evaluate((form: HTMLFormElement) => form.submit())
+              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
+              log("Submitted after clicking checkbox.")
+            }
+          } catch {
+            log("Submit after checkbox did not navigate (set ESCONDIDO_2CAPTCHA_API_KEY for image challenge).")
+          }
         }
       }
     }
