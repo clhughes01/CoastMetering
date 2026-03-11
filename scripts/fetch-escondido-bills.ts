@@ -161,28 +161,27 @@ async function getRecaptchaParams(
 }
 
 /**
- * Solve reCAPTCHA v2 using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2).
- * RecaptchaV2TaskProxyless: workers solve the captcha (including image challenge); we get gRecaptchaResponse and inject it.
- * Use isInvisible: false for visible checkbox (default); true only for invisible v2.
+ * Solve reCAPTCHA v2 using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2, https://2captcha.com/h/recaptcha-v2-bypass).
+ * Pass userAgent so the worker matches your browser (avoids "Verification Failed").
  */
 async function solveRecaptchaV2With2Captcha(
   apiKey: string,
   pageUrl: string,
   siteKey: string,
-  isInvisible = false
+  isInvisible = false,
+  userAgent?: string
 ): Promise<string | null> {
+  const task: Record<string, unknown> = {
+    type: "RecaptchaV2TaskProxyless",
+    websiteURL: pageUrl,
+    websiteKey: siteKey,
+    isInvisible,
+  }
+  if (userAgent) task.userAgent = userAgent
   const createRes = await fetch("https://api.2captcha.com/createTask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      clientKey: apiKey,
-      task: {
-        type: "RecaptchaV2TaskProxyless",
-        websiteURL: pageUrl,
-        websiteKey: siteKey,
-        isInvisible,
-      },
-    }),
+    body: JSON.stringify({ clientKey: apiKey, task }),
   })
   const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
   if (createJson.errorId !== 0 || createJson.taskId == null) {
@@ -300,34 +299,50 @@ async function tryClickRecaptchaCheckbox(
   return false
 }
 
-/** Inject solved reCAPTCHA token so form submit includes it (g-recaptcha-response + optional callback). */
+/**
+ * Inject 2Captcha token per https://2captcha.com/h/recaptcha-v2-bypass:
+ * 1) Target g-recaptcha-response by id then name; 2) Set value; 3) Trigger data-callback if present.
+ */
 async function injectRecaptchaToken(
   frame: import("playwright").Frame,
   token: string
 ): Promise<void> {
   await frame.evaluate((tokenValue) => {
-    const sel = 'textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"]'
-    let el = document.querySelector<HTMLTextAreaElement | HTMLInputElement>(sel)
+    let el = document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null
+    if (!el) {
+      el = document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
+    }
     if (!el) {
       const form = document.querySelector("form")
       if (form) {
         el = document.createElement("textarea")
+        el.id = "g-recaptcha-response"
         el.name = "g-recaptcha-response"
-        el.style.display = "none"
+        el.style.display = "block"
         form.appendChild(el)
       }
     }
     if (el) {
+      el.style.display = "block"
       el.value = tokenValue
       el.dispatchEvent(new Event("input", { bubbles: true }))
+      el.dispatchEvent(new Event("change", { bubbles: true }))
     }
-    const w = window as unknown as { ___grecaptcha_cfg?: { callback?: (t?: string) => void }; grecaptcha?: { getResponse?: () => string } }
-    const cb = w.___grecaptcha_cfg?.callback
-    if (typeof cb === "function") {
+    const recaptchaDiv = document.querySelector("[data-sitekey]") as HTMLElement | null
+    const callbackName = recaptchaDiv?.getAttribute("data-callback")
+    if (callbackName && typeof (window as unknown as Record<string, unknown>)[callbackName] === "function") {
       try {
-        cb(tokenValue)
+        ;(window as unknown as Record<string, (t: string) => void>)[callbackName](tokenValue)
+      } catch (_) {
+        // ignore
+      }
+    }
+    const w = window as unknown as { ___grecaptcha_cfg?: { callback?: (t?: string) => void } }
+    if (typeof w.___grecaptcha_cfg?.callback === "function") {
+      try {
+        w.___grecaptcha_cfg.callback(tokenValue)
       } catch {
-        cb()
+        w.___grecaptcha_cfg.callback()
       }
     }
   }, token)
@@ -443,21 +458,40 @@ async function scrapeBillsFromPortal(
           v2Params = await getRecaptchaV2ParamsLenient(page.mainFrame())
         }
         if (v2Params) {
+          const userAgent = await frame.evaluate(() => navigator.userAgent).catch(() => undefined)
           log(`Solving visible reCAPTCHA v2 via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
-          const token = await solveRecaptchaV2With2Captcha(captchaApiKey, page.url(), v2Params.siteKey, false)
+          const token = await solveRecaptchaV2With2Captcha(
+            captchaApiKey,
+            page.url(),
+            v2Params.siteKey,
+            false,
+            userAgent
+          )
           if (token) {
             await injectRecaptchaToken(frame, token)
             log("Injected reCAPTCHA v2 token into g-recaptcha-response.")
             await page.waitForTimeout(2000)
+            let submitted = false
             try {
-              const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-              if (formEl) {
-                await formEl.evaluate((form: HTMLFormElement) => form.submit())
-                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
-                log("Submitted form with captcha token; left login.")
+              const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In"), input[value*="Sign" i]').first()
+              await signInBtn.click({ timeout: 5000 })
+              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
+              log("Submitted via Sign In button with captcha token; left login.")
+              submitted = true
+            } catch {
+              //
+            }
+            if (!submitted) {
+              try {
+                const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+                if (formEl) {
+                  await formEl.evaluate((form: HTMLFormElement) => form.submit())
+                  await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
+                  log("Submitted via form.submit() with captcha token; left login.")
+                }
+              } catch (e) {
+                log(`Submit with token failed: ${e instanceof Error ? e.message : String(e)}`)
               }
-            } catch (e) {
-              log(`Submit with token failed: ${e instanceof Error ? e.message : String(e)}`)
             }
           } else {
             log("2Captcha v2 did not return a token.")
