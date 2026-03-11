@@ -12,6 +12,9 @@
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *   Property-to-account mapping: property_utility_accounts table in Supabase,
  *   or ESCONDIDO_PROPERTY_ACCOUNTS='{"property-uuid":"account-number",...}'
+ *
+ * Optional (for login pages with reCAPTCHA):
+ *   ESCONDIDO_2CAPTCHA_API_KEY — 2Captcha API key; when set, the script solves reCAPTCHA v3 before submitting login.
  */
 import "dotenv/config"
 
@@ -76,6 +79,108 @@ function normalizeDate(s: string): string {
 }
 
 const log = (msg: string) => console.log(`[Escondido] ${msg}`)
+
+/** Extract reCAPTCHA site key and action from the page (v2 data-sitekey or v3 from script render= or data-sitekey). */
+async function getRecaptchaParams(
+  frame: import("playwright").Frame
+): Promise<{ siteKey: string; action?: string } | null> {
+  return frame.evaluate(() => {
+    const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
+    if (withKey) {
+      const key = withKey.getAttribute("data-sitekey")
+      const action = withKey.getAttribute("data-action") ?? undefined
+      if (key) return { siteKey: key, action }
+    }
+    for (const s of Array.from(document.scripts)) {
+      const src = s.getAttribute("src") || ""
+      const render = src.match(/[\?&]render=([^&]+)/)
+      if (render) return { siteKey: render[1]!, action: undefined }
+    }
+    return null
+  })
+}
+
+/**
+ * Solve reCAPTCHA v3 using 2Captcha API (https://2captcha.com).
+ * Returns the gRecaptchaResponse token to inject, or null on failure.
+ */
+async function solveRecaptchaV3With2Captcha(
+  apiKey: string,
+  pageUrl: string,
+  siteKey: string,
+  pageAction?: string
+): Promise<string | null> {
+  const createRes = await fetch("https://api.2captcha.com/createTask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientKey: apiKey,
+      task: {
+        type: "RecaptchaV3TaskProxyless",
+        websiteURL: pageUrl,
+        websiteKey: siteKey,
+        minScore: 0.9,
+        pageAction: pageAction || "submit",
+      },
+    }),
+  })
+  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
+  if (createJson.errorId !== 0 || createJson.taskId == null) {
+    log(`2Captcha createTask failed: ${createJson.errorDescription ?? JSON.stringify(createJson)}`)
+    return null
+  }
+  const taskId = createJson.taskId
+  for (let i = 0; i < 24; i++) {
+    await new Promise((r) => setTimeout(r, 5000))
+    const resultRes = await fetch("https://api.2captcha.com/getTaskResult", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientKey: apiKey, taskId }),
+    })
+    const resultJson = (await resultRes.json()) as {
+      errorId?: number
+      status?: string
+      solution?: { gRecaptchaResponse?: string; token?: string }
+      errorDescription?: string
+    }
+    if (resultJson.status === "ready" && resultJson.solution) {
+      const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
+      if (token) return token
+    }
+    if (resultJson.errorId !== 0) {
+      log(`2Captcha getTaskResult failed: ${resultJson.errorDescription ?? JSON.stringify(resultJson)}`)
+      return null
+    }
+  }
+  log("2Captcha timed out waiting for solution")
+  return null
+}
+
+/** Inject solved reCAPTCHA token into the page so form submit includes it. */
+async function injectRecaptchaToken(
+  frame: import("playwright").Frame,
+  token: string
+): Promise<void> {
+  await frame.evaluate((tokenValue) => {
+    const sel = 'textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"]'
+    let el = document.querySelector<HTMLTextAreaElement | HTMLInputElement>(sel)
+    if (!el) {
+      const form = document.querySelector("form")
+      if (form) {
+        el = document.createElement("textarea")
+        el.name = "g-recaptcha-response"
+        el.style.display = "none"
+        form.appendChild(el)
+      }
+    }
+    if (el) {
+      el.value = tokenValue
+      el.dispatchEvent(new Event("input", { bubbles: true }))
+    }
+    const cb = (window as unknown as { ___grecaptcha_cfg?: { callback?: () => void } }).___grecaptcha_cfg?.callback
+    if (typeof cb === "function") cb()
+  }, token)
+}
 
 /**
  * Get the frame that contains the Invoice Cloud portal (main frame after redirect or iframe).
@@ -151,6 +256,30 @@ async function scrapeBillsFromPortal(
   await emailInput.fill(loginEmail)
   await passwordInput.fill(loginPassword)
   await page.waitForTimeout(3000)
+
+  // Optional: solve reCAPTCHA v3 via 2Captcha and inject token before submit
+  const captchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY
+  if (captchaApiKey) {
+    log("Solving reCAPTCHA via 2Captcha...")
+    const params = await getRecaptchaParams(frame)
+    if (params) {
+      const pageUrl = page.url()
+      const token = await solveRecaptchaV3With2Captcha(
+        captchaApiKey,
+        pageUrl,
+        params.siteKey,
+        params.action
+      )
+      if (token) {
+        await injectRecaptchaToken(frame, token)
+        log("Injected reCAPTCHA token.")
+      } else {
+        log("2Captcha did not return a token; continuing without it.")
+      }
+    } else {
+      log("No reCAPTCHA site key found on page; continuing without captcha solve.")
+    }
+  }
 
   // Submit: click the form's Sign In button (Do NOT click the nav "Sign In" link.)
   let submitted = false

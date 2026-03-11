@@ -63,6 +63,7 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
+| ESCONDIDO_2CAPTCHA_API_KEY | *(Optional)* [2Captcha](https://2captcha.com) API key; required if the login page shows reCAPTCHA (e.g. in CI). |
 
 ### Step 4: Push and run the workflow once
 
@@ -385,6 +386,9 @@ Downstream you can:
 
 - **Cron returns “Run the script”**  
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
+
+- **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
+  - The Invoice Cloud login uses reCAPTCHA, which can block automated logins (especially in CI). Use a CAPTCHA solving service: set **ESCONDIDO_2CAPTCHA_API_KEY** to your [2Captcha](https://2captcha.com) API key (get one at 2captcha.com; reCAPTCHA v3 solves cost a few cents per run). In CI, add it as a repo secret. The script will request a token, inject it into the form, and submit. Test locally: `ESCONDIDO_2CAPTCHA_API_KEY=your_key npm run fetch-escondido-bills`.
 
 - **Playwright errors on Vercel**  
   - Do not run the Playwright script inside Vercel. Run it in a separate environment (GitHub Actions, Railway, server, etc.) as above.
