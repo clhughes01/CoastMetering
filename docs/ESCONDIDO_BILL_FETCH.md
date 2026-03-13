@@ -63,7 +63,7 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
-| ESCONDIDO_2CAPTCHA_API_KEY | *(Optional)* [2Captcha](https://2captcha.com) API key; required if the login page shows reCAPTCHA (e.g. in CI). |
+| OPENAI_API_KEY | *(Optional)* OpenAI API key; when set, the script uses GPT-4o vision to solve reCAPTCHA image challenges (checkbox + grid). Login is retried until the dashboard is reached. Required in CI if the login page shows reCAPTCHA. |
 | ESCONDIDO_PROXY_SERVER | *(Optional)* Residential proxy URL (e.g. `http://gate.dc:port` or `http://user:pass@host:port`) to reduce captcha triggers; see [bypass captcha with proxies](https://iproyal.com/blog/bypass-captcha/). |
 | ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD | *(Optional)* Proxy auth if not embedded in ESCONDIDO_PROXY_SERVER. |
 
@@ -390,8 +390,9 @@ Downstream you can:
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
 - **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
-  - The Invoice Cloud login uses reCAPTCHA, which can block automated logins (especially in CI). Use **ESCONDIDO_2CAPTCHA_API_KEY** ([2Captcha](https://2captcha.com)) so the script solves the visible v2 captcha and injects the token. In CI, add it as a repo secret.
-  - **If 2Captcha still fails or you want to reduce captcha triggers:** Use a **residential proxy**. Per [How to Bypass CAPTCHA (IPRoyal)](https://iproyal.com/blog/bypass-captcha/), datacenter IPs (e.g. GitHub Actions) are more likely to get CAPTCHAs; a residential proxy can avoid or reduce them. Set **ESCONDIDO_PROXY_SERVER** (and optionally ESCONDIDO_PROXY_USERNAME / ESCONDIDO_PROXY_PASSWORD) so the browser traffic goes through that proxy. The script also sets a realistic User-Agent and locale to improve the browser fingerprint.
+  - The Invoice Cloud login uses reCAPTCHA, which can block automated logins (especially in CI). Set **OPENAI_API_KEY** so the script uses GPT-4o vision to solve the checkbox and any image-grid challenge. Login is retried up to 8 times until the dashboard is reached. In CI, add **OPENAI_API_KEY** as a repo secret (Settings → Secrets and variables → Actions).
+  - **When running locally**, captcha often does not appear; the script will sign in on the first attempt without solving.
+  - **To reduce captcha triggers:** Use a **residential proxy**. Per [How to Bypass CAPTCHA (IPRoyal)](https://iproyal.com/blog/bypass-captcha/), datacenter IPs (e.g. GitHub Actions) are more likely to get CAPTCHAs. Set **ESCONDIDO_PROXY_SERVER** (and optionally ESCONDIDO_PROXY_USERNAME / ESCONDIDO_PROXY_PASSWORD). The script also sets a realistic User-Agent and locale.
 
 - **Playwright errors on Vercel**  
   - Do not run the Playwright script inside Vercel. Run it in a separate environment (GitHub Actions, Railway, server, etc.) as above.

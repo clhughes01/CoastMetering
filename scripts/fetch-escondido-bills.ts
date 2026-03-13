@@ -14,15 +14,17 @@
  *   or ESCONDIDO_PROPERTY_ACCOUNTS='{"property-uuid":"account-number",...}'
  *
  * Optional (for login pages with reCAPTCHA):
- *   ESCONDIDO_2CAPTCHA_API_KEY — 2Captcha API key; when set, the script solves reCAPTCHA v2 (visible) after first Sign In.
+ *   OPENAI_API_KEY — When set, the script uses GPT-4o vision to solve reCAPTCHA image challenges (checkbox + grid).
+ *   Login is retried until the dashboard is reached (works when no captcha appears locally).
  *
- * Optional (to reduce captcha triggers — use a residential proxy; see https://iproyal.com/blog/bypass-captcha/):
+ * Optional (to reduce captcha triggers — use a residential proxy):
  *   ESCONDIDO_PROXY_SERVER — e.g. http://proxy.example.com:8080 or http://user:pass@host:port
  *   ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD — if proxy requires auth (alternative to user:pass in URL)
  */
 import "dotenv/config"
 
 import { chromium } from "playwright"
+import OpenAI from "openai"
 import { createClient } from "@supabase/supabase-js"
 
 const PORTAL_URL = "https://www.invoicecloud.com/escondidoca"
@@ -232,7 +234,11 @@ async function solveRecaptchaV2With2Captcha(
   })
   const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
   if (createJson.errorId !== 0 || createJson.taskId == null) {
-    log(`2Captcha v2 createTask failed: ${createJson.errorDescription ?? JSON.stringify(createJson)}`)
+    const msg = createJson.errorDescription ?? JSON.stringify(createJson)
+    log(`2Captcha v2 createTask failed: ${msg}`)
+    if (/API key is missing|incorrect format/i.test(msg)) {
+      log("In CI: add ESCONDIDO_2CAPTCHA_API_KEY in repo Settings → Secrets (no spaces/newlines).")
+    }
     return null
   }
   const taskId = createJson.taskId
@@ -289,7 +295,11 @@ async function solveRecaptchaV2EnterpriseWith2Captcha(
   })
   const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
   if (createJson.errorId !== 0 || createJson.taskId == null) {
-    log(`2Captcha Enterprise createTask failed: ${createJson.errorDescription ?? JSON.stringify(createJson)}`)
+    const msg = createJson.errorDescription ?? JSON.stringify(createJson)
+    log(`2Captcha Enterprise createTask failed: ${msg}`)
+    if (/API key is missing|incorrect format/i.test(msg)) {
+      log("In CI: add ESCONDIDO_2CAPTCHA_API_KEY in repo Settings → Secrets (no spaces/newlines).")
+    }
     return null
   }
   const taskId = createJson.taskId
@@ -401,6 +411,122 @@ async function tryClickRecaptchaCheckbox(
   }
   log("Could not find or click reCAPTCHA checkbox iframe.")
   return false
+}
+
+/** Find the reCAPTCHA challenge iframe (image grid). */
+function getChallengeFrame(page: import("playwright").Page): import("playwright").Frame | null {
+  for (const f of page.frames()) {
+    const u = f.url()
+    if (!/recaptcha|google\.com|recaptcha\.net/i.test(u)) continue
+    if (/bframe|api2\/frame|enterprise\/frame/i.test(u)) return f
+  }
+  return null
+}
+
+/**
+ * Solve reCAPTCHA image challenge using OpenAI vision. Finds the challenge iframe, screenshots it,
+ * asks GPT-4o which tiles to select, clicks them, then clicks Verify. Returns true if we attempted a solve.
+ */
+async function solveRecaptchaImageWithVision(
+  page: import("playwright").Page
+): Promise<boolean> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
+  if (!apiKey) return false
+  const challengeFrame = getChallengeFrame(page)
+  if (!challengeFrame) return false
+  let instruction = ""
+  try {
+    instruction = await challengeFrame.locator(".rc-imageselect-desc-wrapper").first().innerText({ timeout: 3000 }).catch(() => "")
+    instruction = instruction.replace(/\s+/g, " ").trim()
+  } catch {
+    return false
+  }
+  if (!instruction) return false
+  const table = challengeFrame.locator("table.rc-imageselect-table-33, table.rc-imageselect-table-44").first()
+  const tileCount = await table.locator("td").count().catch(() => 0)
+  if (tileCount === 0) return false
+  const gridSize = tileCount <= 9 ? 9 : 16
+  try {
+    const screenshot = await challengeFrame.locator("table").first().screenshot({ timeout: 5000 })
+    if (!screenshot || screenshot.length < 100) return false
+    const base64 = screenshot.toString("base64")
+    const openai = new OpenAI({ apiKey })
+    const resp = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `This is a reCAPTCHA image challenge. Instruction: "${instruction}". The image shows a grid of ${gridSize} tiles (0-indexed left to right, top to bottom). Reply with ONLY a JSON array of the 0-based indices of tiles that match the instruction. Example: [0,2,5] or [1,3,4,7]. If none match, reply [].`,
+            },
+            { type: "image_url", image_url: { url: `data:image/png;base64,${base64}` } },
+          ],
+        },
+      ],
+      max_tokens: 100,
+    })
+    const content = resp.choices[0]?.message?.content?.trim() ?? ""
+    const jsonMatch = content.match(/\[[\d,\s]*\]/)
+    const indices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : []
+    if (!Array.isArray(indices) || indices.length === 0) {
+      log("Vision returned no tiles to click.")
+      return true
+    }
+    const tiles = table.locator("td")
+    for (const i of indices) {
+      if (i >= 0 && i < tileCount) await tiles.nth(i).click({ timeout: 2000 }).catch(() => {})
+    }
+    await page.waitForTimeout(800)
+    const verifyBtn = challengeFrame.locator("#recaptcha-verify-button").first()
+    await verifyBtn.click({ timeout: 3000 }).catch(() => {})
+    log("AI solved image challenge; clicked Verify.")
+    return true
+  } catch (e) {
+    log(`Vision solve failed: ${e instanceof Error ? e.message : String(e)}`)
+    return false
+  }
+}
+
+/**
+ * Try to complete reCAPTCHA: click checkbox, then solve any image challenge with AI (retry until gone or max rounds).
+ */
+async function solveCaptchaWithAI(
+  page: import("playwright").Page,
+  frame: import("playwright").Frame,
+  passwordInput: import("playwright").Locator,
+  loginPassword: string
+): Promise<boolean> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
+  const maxImageRounds = 5
+  await passwordInput.fill(loginPassword)
+  await page.waitForTimeout(1000)
+  const clicked = await tryClickRecaptchaCheckbox(page)
+  if (!clicked) return false
+  await page.waitForTimeout(3500)
+  for (let r = 0; r < maxImageRounds; r++) {
+    if (!page.url().includes("customerlogin")) return true
+    const challengeFrame = getChallengeFrame(page)
+    if (!challengeFrame) break
+    const attempted = await solveRecaptchaImageWithVision(page)
+    if (!attempted) break
+    await page.waitForTimeout(3000)
+  }
+  try {
+    const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In")').first()
+    await signInBtn.click({ timeout: 3000 }).catch(() => {})
+    await page.waitForTimeout(3000)
+    if (!page.url().includes("customerlogin")) return true
+    const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+    if (formEl) {
+      await formEl.evaluate((form: HTMLFormElement) => form.submit())
+      await page.waitForTimeout(4000)
+    }
+  } catch {
+    //
+  }
+  return !page.url().includes("customerlogin")
 }
 
 /**
@@ -516,139 +642,73 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Login: email → password → Sign In (first time) → captcha appears & password cleared → re-enter password → captcha → Sign In again
+  // 2) Login with retries: fill form → Sign In → if captcha, solve with AI (or checkbox only) → retry until dashboard or max attempts
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
   await emailInput.waitFor({ state: "visible", timeout: 15000 })
-  log("Filling email and password...")
-  await emailInput.fill(loginEmail)
-  await passwordInput.fill(loginPassword)
-  await page.waitForTimeout(1500)
-
-  // 2a) First Sign In — triggers "please complete the checkbox challenge below" (password is cleared)
-  log("Clicking Sign In (first time) to trigger captcha...")
-  try {
-    const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
-    await btnByRole.waitFor({ state: "visible", timeout: 8000 })
-    await btnByRole.click()
-  } catch {
+  const MAX_LOGIN_ATTEMPTS = 8
+  for (let attempt = 1; attempt <= MAX_LOGIN_ATTEMPTS; attempt++) {
+    log(`Login attempt ${attempt}/${MAX_LOGIN_ATTEMPTS}...`)
+    await emailInput.fill(loginEmail)
+    await passwordInput.fill(loginPassword)
+    await page.waitForTimeout(1500)
+    log("Clicking Sign In...")
     try {
-      const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
-      const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
-      await submitInForm.waitFor({ state: "visible", timeout: 8000 })
-      await submitInForm.click({ force: true })
+      const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
+      await btnByRole.waitFor({ state: "visible", timeout: 8000 })
+      await btnByRole.click()
     } catch {
-      const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-      if (formEl) await formEl.evaluate((form: HTMLFormElement) => form.submit())
-    }
-  }
-  await page.waitForTimeout(4000)
-
-  // 2b) If still on login with checkbox challenge: re-enter password, solve via 2Captcha (visible v2), inject token, submit
-  const captchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY
-  if (page.url().includes("customerlogin")) {
-    const bodyText = await frame.locator("body").innerText().catch(() => "")
-    const needsCheckbox = /checkbox\s*challenge|complete\s*the\s*checkbox/i.test(bodyText)
-    if (needsCheckbox) {
-      log("Checkbox challenge shown; re-entering password...")
-      await passwordInput.fill(loginPassword)
-      await page.waitForTimeout(1000)
-
-      if (captchaApiKey) {
-        let v2Params = await getRecaptchaV2ParamsLenient(frame)
-        if (!v2Params && frame !== page.mainFrame()) {
-          v2Params = await getRecaptchaV2ParamsLenient(page.mainFrame())
-        }
-        if (v2Params) {
-          const userAgent = await frame.evaluate(() => navigator.userAgent).catch(() => undefined)
-          const apiDomain = v2Params.apiDomain
-          if (apiDomain === "recaptcha.net") log("Using apiDomain: recaptcha.net for 2Captcha")
-          if (v2Params.isEnterprise) {
-            log("Site uses reCAPTCHA Enterprise; using 2Captcha Enterprise solver.")
-          } else {
-            log("Using reCAPTCHA v2 (checkbox + images) per 2Captcha API.")
-          }
-          log(`Solving via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 24)}...)...`)
-          const token = v2Params.isEnterprise
-            ? await solveRecaptchaV2EnterpriseWith2Captcha(
-                captchaApiKey,
-                page.url(),
-                v2Params.siteKey,
-                false,
-                userAgent,
-                apiDomain
-              )
-            : await solveRecaptchaV2With2Captcha(
-                captchaApiKey,
-                page.url(),
-                v2Params.siteKey,
-                false,
-                userAgent,
-                apiDomain
-              )
-          if (token) {
-            const injected = await injectRecaptchaToken(frame, token)
-            if (!injected) {
-              log("Could not find g-recaptcha-response on page; token not injected.")
-            } else {
-              log("Injected reCAPTCHA v2 token into widget response field; triggering callback then submit.")
-            }
-            await page.waitForTimeout(2500)
-            let submitted = false
-            try {
-              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 8000 })
-              log("Navigated after callback; left login.")
-              submitted = true
-            } catch {
-              //
-            }
-            if (!submitted) {
-              try {
-                const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In"), input[value*="Sign" i]').first()
-                await signInBtn.click({ timeout: 5000 })
-                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
-                log("Submitted via Sign In button; left login.")
-                submitted = true
-              } catch {
-                //
-              }
-            }
-            if (!submitted) {
-              try {
-                const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-                if (formEl) {
-                  await formEl.evaluate((form: HTMLFormElement) => form.submit())
-                  await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
-                  log("Submitted via form.submit(); left login.")
-                }
-              } catch (e) {
-                log(`Submit with token failed: ${e instanceof Error ? e.message : String(e)}`)
-              }
-            }
-          } else {
-            log("2Captcha v2 did not return a token.")
-          }
-        } else {
-          log("No reCAPTCHA v2 site key found after checkbox challenge.")
-        }
-      } else {
-        const clicked = await tryClickRecaptchaCheckbox(page)
-        if (clicked) {
-          await page.waitForTimeout(4000)
-          try {
-            const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-            if (formEl) {
-              formEl.evaluate((form: HTMLFormElement) => form.submit())
-              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
-              log("Submitted after clicking checkbox.")
-            }
-          } catch {
-            log("Submit after checkbox did not navigate (set ESCONDIDO_2CAPTCHA_API_KEY for image challenge).")
-          }
-        }
+      try {
+        const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
+        const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
+        await submitInForm.waitFor({ state: "visible", timeout: 8000 })
+        await submitInForm.click({ force: true })
+      } catch {
+        const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+        if (formEl) await formEl.evaluate((form: HTMLFormElement) => form.submit())
       }
     }
+    await page.waitForTimeout(4000)
+    if (!page.url().includes("customerlogin")) {
+      log("Reached dashboard (no captcha or already solved).")
+      break
+    }
+    const bodyText = await frame.locator("body").innerText().catch(() => "")
+    const needsCheckbox = /checkbox\s*challenge|complete\s*the\s*checkbox/i.test(bodyText)
+    if (!needsCheckbox) {
+      await page.waitForTimeout(3000)
+      if (!page.url().includes("customerlogin")) break
+    }
+    log("Captcha required; solving...")
+    const openaiKey = process.env.OPENAI_API_KEY?.trim()
+    if (openaiKey) {
+      const gotIn = await solveCaptchaWithAI(page, frame, passwordInput, loginPassword)
+      if (gotIn) {
+        log("AI captcha solve succeeded.")
+        break
+      }
+    } else {
+      await passwordInput.fill(loginPassword)
+      await page.waitForTimeout(1000)
+      const clicked = await tryClickRecaptchaCheckbox(page)
+      if (clicked) {
+        await page.waitForTimeout(4000)
+        try {
+          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+          if (formEl) {
+            await formEl.evaluate((form: HTMLFormElement) => form.submit())
+            await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
+            log("Submitted after clicking checkbox.")
+            break
+          }
+        } catch {
+          //
+        }
+      }
+      log("Set OPENAI_API_KEY to solve image challenges in CI.")
+    }
+    await page.waitForTimeout(2000)
   }
 
   log("Waiting for dashboard (leaving customerlogin)...")
