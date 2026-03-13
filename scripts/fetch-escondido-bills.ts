@@ -336,35 +336,22 @@ async function tryClickRecaptchaCheckbox(
 }
 
 /**
- * Inject 2Captcha token: fill g-recaptcha-response in the login form, then trigger callback so the site accepts it.
- * Targets the response element inside the form that contains the password field (so we fill the right widget).
+ * Inject 2Captcha token into the EXISTING g-recaptcha-response textarea that the reCAPTCHA widget created.
+ * We must NOT create a new field — the server reads the widget's response. Keep it hidden.
  */
 async function injectRecaptchaToken(
   frame: import("playwright").Frame,
   token: string
-): Promise<void> {
-  await frame.evaluate((tokenValue) => {
-    const form = document.querySelector("form")
-    if (!form) return
-    let el = form.querySelector("#g-recaptcha-response") as HTMLTextAreaElement | null
-    if (!el) el = form.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
-    if (!el) {
-      el = document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null
-      if (el && !form.contains(el)) el = null
-    }
-    if (!el) {
-      el = document.createElement("textarea")
-      el.id = "g-recaptcha-response"
-      el.name = "g-recaptcha-response"
-      el.style.display = "block"
-      form.appendChild(el)
-    }
-    el.style.display = "block"
+): Promise<boolean> {
+  const found = await frame.evaluate((tokenValue) => {
+    const el = document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null
+      || document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
+    if (!el) return false
     el.value = tokenValue
     el.dispatchEvent(new Event("input", { bubbles: true }))
     el.dispatchEvent(new Event("change", { bubbles: true }))
 
-    const recaptchaDiv = form.querySelector("[data-sitekey]") || document.querySelector("[data-sitekey]")
+    const recaptchaDiv = document.querySelector("[data-sitekey]") as HTMLElement | null
     const callbackName = recaptchaDiv?.getAttribute("data-callback")
     if (callbackName) {
       const fn = (window as unknown as Record<string, (t?: string) => void>)[callbackName]
@@ -382,7 +369,9 @@ async function injectRecaptchaToken(
         w.___grecaptcha_cfg.callback()
       }
     }
+    return true
   }, token)
+  return found === true
 }
 
 /**
@@ -508,8 +497,12 @@ async function scrapeBillsFromPortal(
             apiDomain
           )
           if (token) {
-            await injectRecaptchaToken(frame, token)
-            log("Injected reCAPTCHA v2 token; triggering callback then submit.")
+            const injected = await injectRecaptchaToken(frame, token)
+            if (!injected) {
+              log("Could not find g-recaptcha-response on page; token not injected.")
+            } else {
+              log("Injected reCAPTCHA v2 token into widget response field; triggering callback then submit.")
+            }
             await page.waitForTimeout(2500)
             let submitted = false
             try {
