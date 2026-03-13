@@ -98,38 +98,58 @@ async function getRecaptchaV2Params(
   })
 }
 
+type RecaptchaV2Params = {
+  siteKey: string
+  apiDomain?: "recaptcha.net" | "google.com"
+  isEnterprise?: boolean
+}
+
 /**
  * Lenient v2 site key + apiDomain for when checkbox challenge is shown.
- * Returns apiDomain "recaptcha.net" when page loads recaptcha from that domain (required for 2Captcha to return a valid token).
+ * Prefers the visible widget key (iframe with size=normal) when the page has both invisible and checkbox.
+ * Detects Enterprise (recaptcha/enterprise) so we can use 2Captcha Enterprise API.
  */
 async function getRecaptchaV2ParamsLenient(
   frame: import("playwright").Frame
-): Promise<{ siteKey: string; apiDomain?: "recaptcha.net" | "google.com" } | null> {
-  const strict = await getRecaptchaV2Params(frame)
-  if (strict) {
-    const apiDomain = await frame.evaluate(() => {
-      for (const s of Array.from(document.scripts)) {
-        if ((s.getAttribute("src") || "").includes("recaptcha.net")) return "recaptcha.net"
-      }
-      for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
-        if ((iframe.getAttribute("src") || "").includes("recaptcha.net")) return "recaptcha.net"
-      }
-      return "google.com"
-    })
-    return { ...strict, apiDomain: apiDomain as "recaptcha.net" | "google.com" }
-  }
-  return frame.evaluate(() => {
+): Promise<RecaptchaV2Params | null> {
+  const result = await frame.evaluate((): RecaptchaV2Params | null => {
     let siteKey: string | null = null
     let useRecaptchaNet = false
+    let enterprise = false
+    // Prefer key from visible checkbox iframe (size=normal); Invoice Cloud loads both invisible + normal
+    for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
+      const src = iframe.getAttribute("src") || ""
+      if (src.includes("recaptcha.net")) useRecaptchaNet = true
+      if (src.includes("enterprise")) enterprise = true
+      if (src.includes("size=normal")) {
+        const k = src.match(/[\?&]k=([^&]+)/)
+        if (k) return { siteKey: k[1]!, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com", isEnterprise: enterprise }
+      }
+    }
     const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
     if (withKey) {
       siteKey = withKey.getAttribute("data-sitekey")
+      for (const s of Array.from(document.scripts)) {
+        if ((s.getAttribute("src") || "").includes("enterprise")) enterprise = true
+      }
+      if (siteKey) return { siteKey, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com", isEnterprise: enterprise }
+    }
+    for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
+      const src = iframe.getAttribute("src") || ""
+      if (src.includes("recaptcha.net")) useRecaptchaNet = true
+      if (src.includes("enterprise")) enterprise = true
+      const k = src.match(/[\?&]k=([^&]+)/)
+      if (k) {
+        siteKey = k[1]!
+        break
+      }
     }
     if (!siteKey) {
       for (const s of Array.from(document.scripts)) {
         const src = s.getAttribute("src") || ""
         if (!/recaptcha|google\.com|recaptcha\.net/i.test(src)) continue
         if (src.includes("recaptcha.net")) useRecaptchaNet = true
+        if (src.includes("enterprise")) enterprise = true
         const k = src.match(/[\?&]k=([^&]+)/)
         if (k) {
           siteKey = k[1]!
@@ -143,24 +163,14 @@ async function getRecaptchaV2ParamsLenient(
       }
     }
     if (!siteKey) {
-      for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
-        const src = iframe.getAttribute("src") || ""
-        if (src.includes("recaptcha.net")) useRecaptchaNet = true
-        const k = src.match(/[\?&]k=([^&]+)/)
-        if (k) {
-          siteKey = k[1]!
-          break
-        }
-      }
-    }
-    if (!siteKey) {
       const html = document.documentElement.outerHTML
       const longKey = html.match(/['"]?(6L[\w\-]{20,})['"]?/)
       if (longKey) siteKey = longKey[1]!
     }
     if (!siteKey) return null
-    return { siteKey, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com" }
+    return { siteKey, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com", isEnterprise: enterprise }
   })
+  return result
 }
 
 /** Get reCAPTCHA v3 params only (script render= or div with data-action). */
@@ -248,6 +258,63 @@ async function solveRecaptchaV2With2Captcha(
     }
   }
   log("2Captcha v2 timed out waiting for solution")
+  return null
+}
+
+/**
+ * Solve reCAPTCHA v2 Enterprise using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2-enterprise).
+ * Use when the site loads recaptcha/enterprise.js — standard v2 tokens are rejected by Enterprise verification.
+ */
+async function solveRecaptchaV2EnterpriseWith2Captcha(
+  apiKey: string,
+  pageUrl: string,
+  siteKey: string,
+  isInvisible = false,
+  userAgent?: string,
+  apiDomain?: "google.com" | "recaptcha.net"
+): Promise<string | null> {
+  const task: Record<string, unknown> = {
+    type: "RecaptchaV2EnterpriseTaskProxyless",
+    websiteURL: pageUrl,
+    websiteKey: siteKey,
+    isInvisible,
+  }
+  if (userAgent) task.userAgent = userAgent
+  if (apiDomain) task.apiDomain = apiDomain
+  const createRes = await fetch("https://api.2captcha.com/createTask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientKey: apiKey, task }),
+  })
+  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
+  if (createJson.errorId !== 0 || createJson.taskId == null) {
+    log(`2Captcha Enterprise createTask failed: ${createJson.errorDescription ?? JSON.stringify(createJson)}`)
+    return null
+  }
+  const taskId = createJson.taskId
+  for (let i = 0; i < 24; i++) {
+    await new Promise((r) => setTimeout(r, 5000))
+    const resultRes = await fetch("https://api.2captcha.com/getTaskResult", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientKey: apiKey, taskId }),
+    })
+    const resultJson = (await resultRes.json()) as {
+      errorId?: number
+      status?: string
+      solution?: { gRecaptchaResponse?: string; token?: string }
+      errorDescription?: string
+    }
+    if (resultJson.status === "ready" && resultJson.solution) {
+      const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
+      if (token) return token
+    }
+    if (resultJson.errorId !== 0) {
+      log(`2Captcha Enterprise getTaskResult failed: ${resultJson.errorDescription ?? JSON.stringify(resultJson)}`)
+      return null
+    }
+  }
+  log("2Captcha Enterprise timed out waiting for solution")
   return null
 }
 
@@ -487,15 +554,25 @@ async function scrapeBillsFromPortal(
           const userAgent = await frame.evaluate(() => navigator.userAgent).catch(() => undefined)
           const apiDomain = v2Params.apiDomain
           if (apiDomain === "recaptcha.net") log("Using apiDomain: recaptcha.net for 2Captcha")
-          log(`Solving visible reCAPTCHA v2 via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
-          const token = await solveRecaptchaV2With2Captcha(
-            captchaApiKey,
-            page.url(),
-            v2Params.siteKey,
-            false,
-            userAgent,
-            apiDomain
-          )
+          if (v2Params.isEnterprise) log("Detected reCAPTCHA Enterprise; using 2Captcha Enterprise API.")
+          log(`Solving visible reCAPTCHA ${v2Params.isEnterprise ? "Enterprise" : "v2"} via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
+          const token = v2Params.isEnterprise
+            ? await solveRecaptchaV2EnterpriseWith2Captcha(
+                captchaApiKey,
+                page.url(),
+                v2Params.siteKey,
+                false,
+                userAgent,
+                apiDomain
+              )
+            : await solveRecaptchaV2With2Captcha(
+                captchaApiKey,
+                page.url(),
+                v2Params.siteKey,
+                false,
+                userAgent,
+                apiDomain
+              )
           if (token) {
             const injected = await injectRecaptchaToken(frame, token)
             if (!injected) {
