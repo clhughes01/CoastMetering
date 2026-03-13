@@ -424,11 +424,12 @@ function getChallengeFrame(page: import("playwright").Page): import("playwright"
 }
 
 /**
- * Solve reCAPTCHA image challenge using OpenAI vision. Finds the challenge iframe, screenshots it,
- * asks GPT-4o which tiles to select, clicks them, then clicks Verify. Returns true if we attempted a solve.
+ * Solve one reCAPTCHA image challenge: screenshot grid, ask GPT-4o for tile indices, click them, click Verify.
+ * Returns the instruction text (for logging) or empty string if no challenge/solve attempted.
  */
 async function solveRecaptchaImageWithVision(
-  page: import("playwright").Page
+  page: import("playwright").Page,
+  roundLabel: string
 ): Promise<boolean> {
   const apiKey = process.env.OPENAI_API_KEY?.trim()
   if (!apiKey) return false
@@ -442,6 +443,7 @@ async function solveRecaptchaImageWithVision(
     return false
   }
   if (!instruction) return false
+  log(`${roundLabel} Image challenge: "${instruction.slice(0, 60)}${instruction.length > 60 ? "..." : ""}"`)
   const table = challengeFrame.locator("table.rc-imageselect-table-33, table.rc-imageselect-table-44").first()
   const tileCount = await table.locator("td").count().catch(() => 0)
   if (tileCount === 0) return false
@@ -471,26 +473,28 @@ async function solveRecaptchaImageWithVision(
     const jsonMatch = content.match(/\[[\d,\s]*\]/)
     const indices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : []
     if (!Array.isArray(indices) || indices.length === 0) {
-      log("Vision returned no tiles to click.")
-      return true
-    }
-    const tiles = table.locator("td")
-    for (const i of indices) {
-      if (i >= 0 && i < tileCount) await tiles.nth(i).click({ timeout: 2000 }).catch(() => {})
+      log(`${roundLabel} Vision returned no tiles to click; clicking Verify anyway.`)
+    } else {
+      const tiles = table.locator("td")
+      for (const i of indices) {
+        if (i >= 0 && i < tileCount) await tiles.nth(i).click({ timeout: 2000 }).catch(() => {})
+      }
+      log(`${roundLabel} Clicked ${indices.length} tile(s).`)
     }
     await page.waitForTimeout(800)
     const verifyBtn = challengeFrame.locator("#recaptcha-verify-button").first()
     await verifyBtn.click({ timeout: 3000 }).catch(() => {})
-    log("AI solved image challenge; clicked Verify.")
+    log(`${roundLabel} Clicked Verify.`)
     return true
   } catch (e) {
-    log(`Vision solve failed: ${e instanceof Error ? e.message : String(e)}`)
+    log(`${roundLabel} Vision failed: ${e instanceof Error ? e.message : String(e)}`)
     return false
   }
 }
 
 /**
- * Try to complete reCAPTCHA: click checkbox, then solve any image challenge with AI (retry until gone or max rounds).
+ * Complete reCAPTCHA: click checkbox, then for each image challenge (one or more grids) solve with AI, click Verify.
+ * When no more image challenge is shown, click Sign In once.
  */
 async function solveCaptchaWithAI(
   page: import("playwright").Page,
@@ -502,17 +506,27 @@ async function solveCaptchaWithAI(
   const maxImageRounds = 5
   await passwordInput.fill(loginPassword)
   await page.waitForTimeout(1000)
+  log("Clicking reCAPTCHA checkbox...")
   const clicked = await tryClickRecaptchaCheckbox(page)
   if (!clicked) return false
+  log("Waiting for image challenge (if any)...")
   await page.waitForTimeout(3500)
+  let round = 0
   for (let r = 0; r < maxImageRounds; r++) {
     if (!page.url().includes("customerlogin")) return true
     const challengeFrame = getChallengeFrame(page)
-    if (!challengeFrame) break
-    const attempted = await solveRecaptchaImageWithVision(page)
+    if (!challengeFrame) {
+      log("No image challenge; captcha may be satisfied.")
+      break
+    }
+    round++
+    const roundLabel = `[Captcha ${round}/${maxImageRounds}]`
+    const attempted = await solveRecaptchaImageWithVision(page, roundLabel)
     if (!attempted) break
-    await page.waitForTimeout(3000)
+    log(`${roundLabel} Waiting for next challenge or for captcha to close...`)
+    await page.waitForTimeout(4000)
   }
+  log("Clicking Sign In (after captcha)...")
   try {
     const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In")').first()
     await signInBtn.click({ timeout: 3000 }).catch(() => {})
