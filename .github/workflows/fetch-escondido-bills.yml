@@ -24,6 +24,9 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ESCONDIDO_2CAPTCHA_API_KEY: ${{ secrets.ESCONDIDO_2CAPTCHA_API_KEY }}
+          ESCONDIDO_PROXY_SERVER: ${{ secrets.ESCONDIDO_PROXY_SERVER }}
+          ESCONDIDO_PROXY_USERNAME: ${{ secrets.ESCONDIDO_PROXY_USERNAME }}
+          ESCONDIDO_PROXY_PASSWORD: ${{ secrets.ESCONDIDO_PROXY_PASSWORD }}
       - name: Upload debug artifacts (when 0 bills or trace from CI)
         if: always()
         continue-on-error: true

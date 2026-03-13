@@ -14,7 +14,11 @@
  *   or ESCONDIDO_PROPERTY_ACCOUNTS='{"property-uuid":"account-number",...}'
  *
  * Optional (for login pages with reCAPTCHA):
- *   ESCONDIDO_2CAPTCHA_API_KEY — 2Captcha API key; when set, the script solves reCAPTCHA v3 before submitting login.
+ *   ESCONDIDO_2CAPTCHA_API_KEY — 2Captcha API key; when set, the script solves reCAPTCHA v2 (visible) after first Sign In.
+ *
+ * Optional (to reduce captcha triggers — use a residential proxy; see https://iproyal.com/blog/bypass-captcha/):
+ *   ESCONDIDO_PROXY_SERVER — e.g. http://proxy.example.com:8080 or http://user:pass@host:port
+ *   ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD — if proxy requires auth (alternative to user:pass in URL)
  */
 import "dotenv/config"
 
@@ -95,37 +99,67 @@ async function getRecaptchaV2Params(
 }
 
 /**
- * Lenient v2 site key lookup for when checkbox challenge is shown but strict v2 lookup failed.
- * Tries: [data-sitekey] (any), script src with recaptcha and k= or render=, iframe src with k=.
+ * Lenient v2 site key + apiDomain for when checkbox challenge is shown.
+ * Returns apiDomain "recaptcha.net" when page loads recaptcha from that domain (required for 2Captcha to return a valid token).
  */
 async function getRecaptchaV2ParamsLenient(
   frame: import("playwright").Frame
-): Promise<{ siteKey: string } | null> {
+): Promise<{ siteKey: string; apiDomain?: "recaptcha.net" | "google.com" } | null> {
   const strict = await getRecaptchaV2Params(frame)
-  if (strict) return strict
+  if (strict) {
+    const apiDomain = await frame.evaluate(() => {
+      for (const s of Array.from(document.scripts)) {
+        if ((s.getAttribute("src") || "").includes("recaptcha.net")) return "recaptcha.net"
+      }
+      for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
+        if ((iframe.getAttribute("src") || "").includes("recaptcha.net")) return "recaptcha.net"
+      }
+      return "google.com"
+    })
+    return { ...strict, apiDomain: apiDomain as "recaptcha.net" | "google.com" }
+  }
   return frame.evaluate(() => {
+    let siteKey: string | null = null
+    let useRecaptchaNet = false
     const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
     if (withKey) {
-      const key = withKey.getAttribute("data-sitekey")
-      if (key) return { siteKey: key }
+      siteKey = withKey.getAttribute("data-sitekey")
     }
-    for (const s of Array.from(document.scripts)) {
-      const src = s.getAttribute("src") || ""
-      if (!/recaptcha|google\.com|recaptcha\.net/i.test(src)) continue
-      const k = src.match(/[\?&]k=([^&]+)/)
-      if (k) return { siteKey: k[1]! }
-      const render = src.match(/[\?&]render=([^&]+)/)
-      if (render) return { siteKey: render[1]! }
+    if (!siteKey) {
+      for (const s of Array.from(document.scripts)) {
+        const src = s.getAttribute("src") || ""
+        if (!/recaptcha|google\.com|recaptcha\.net/i.test(src)) continue
+        if (src.includes("recaptcha.net")) useRecaptchaNet = true
+        const k = src.match(/[\?&]k=([^&]+)/)
+        if (k) {
+          siteKey = k[1]!
+          break
+        }
+        const render = src.match(/[\?&]render=([^&]+)/)
+        if (render) {
+          siteKey = render[1]!
+          break
+        }
+      }
     }
-    for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
-      const src = iframe.getAttribute("src") || ""
-      const k = src.match(/[\?&]k=([^&]+)/)
-      if (k) return { siteKey: k[1]! }
+    if (!siteKey) {
+      for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
+        const src = iframe.getAttribute("src") || ""
+        if (src.includes("recaptcha.net")) useRecaptchaNet = true
+        const k = src.match(/[\?&]k=([^&]+)/)
+        if (k) {
+          siteKey = k[1]!
+          break
+        }
+      }
     }
-    const html = document.documentElement.outerHTML
-    const longKey = html.match(/['"]?(6L[\w\-]{20,})['"]?/)
-    if (longKey) return { siteKey: longKey[1]! }
-    return null
+    if (!siteKey) {
+      const html = document.documentElement.outerHTML
+      const longKey = html.match(/['"]?(6L[\w\-]{20,})['"]?/)
+      if (longKey) siteKey = longKey[1]!
+    }
+    if (!siteKey) return null
+    return { siteKey, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com" }
   })
 }
 
@@ -161,15 +195,16 @@ async function getRecaptchaParams(
 }
 
 /**
- * Solve reCAPTCHA v2 using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2, https://2captcha.com/h/recaptcha-v2-bypass).
- * Pass userAgent so the worker matches your browser (avoids "Verification Failed").
+ * Solve reCAPTCHA v2 using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2).
+ * apiDomain must match how the site loads recaptcha (google.com vs recaptcha.net) or token is rejected.
  */
 async function solveRecaptchaV2With2Captcha(
   apiKey: string,
   pageUrl: string,
   siteKey: string,
   isInvisible = false,
-  userAgent?: string
+  userAgent?: string,
+  apiDomain?: "google.com" | "recaptcha.net"
 ): Promise<string | null> {
   const task: Record<string, unknown> = {
     type: "RecaptchaV2TaskProxyless",
@@ -178,6 +213,7 @@ async function solveRecaptchaV2With2Captcha(
     isInvisible,
   }
   if (userAgent) task.userAgent = userAgent
+  if (apiDomain) task.apiDomain = apiDomain
   const createRes = await fetch("https://api.2captcha.com/createTask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -300,41 +336,42 @@ async function tryClickRecaptchaCheckbox(
 }
 
 /**
- * Inject 2Captcha token per https://2captcha.com/h/recaptcha-v2-bypass:
- * 1) Target g-recaptcha-response by id then name; 2) Set value; 3) Trigger data-callback if present.
+ * Inject 2Captcha token: fill g-recaptcha-response in the login form, then trigger callback so the site accepts it.
+ * Targets the response element inside the form that contains the password field (so we fill the right widget).
  */
 async function injectRecaptchaToken(
   frame: import("playwright").Frame,
   token: string
 ): Promise<void> {
   await frame.evaluate((tokenValue) => {
-    let el = document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null
+    const form = document.querySelector("form")
+    if (!form) return
+    let el = form.querySelector("#g-recaptcha-response") as HTMLTextAreaElement | null
+    if (!el) el = form.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
     if (!el) {
-      el = document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
+      el = document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null
+      if (el && !form.contains(el)) el = null
     }
     if (!el) {
-      const form = document.querySelector("form")
-      if (form) {
-        el = document.createElement("textarea")
-        el.id = "g-recaptcha-response"
-        el.name = "g-recaptcha-response"
-        el.style.display = "block"
-        form.appendChild(el)
-      }
-    }
-    if (el) {
+      el = document.createElement("textarea")
+      el.id = "g-recaptcha-response"
+      el.name = "g-recaptcha-response"
       el.style.display = "block"
-      el.value = tokenValue
-      el.dispatchEvent(new Event("input", { bubbles: true }))
-      el.dispatchEvent(new Event("change", { bubbles: true }))
+      form.appendChild(el)
     }
-    const recaptchaDiv = document.querySelector("[data-sitekey]") as HTMLElement | null
+    el.style.display = "block"
+    el.value = tokenValue
+    el.dispatchEvent(new Event("input", { bubbles: true }))
+    el.dispatchEvent(new Event("change", { bubbles: true }))
+
+    const recaptchaDiv = form.querySelector("[data-sitekey]") || document.querySelector("[data-sitekey]")
     const callbackName = recaptchaDiv?.getAttribute("data-callback")
-    if (callbackName && typeof (window as unknown as Record<string, unknown>)[callbackName] === "function") {
-      try {
-        ;(window as unknown as Record<string, (t: string) => void>)[callbackName](tokenValue)
-      } catch (_) {
-        // ignore
+    if (callbackName) {
+      const fn = (window as unknown as Record<string, (t?: string) => void>)[callbackName]
+      if (typeof fn === "function") {
+        try {
+          fn(tokenValue)
+        } catch (_) {}
       }
     }
     const w = window as unknown as { ___grecaptcha_cfg?: { callback?: (t?: string) => void } }
@@ -395,7 +432,7 @@ async function scrapeBillsFromPortal(
 ): Promise<FetchedBill[]> {
   log("Loading portal...")
   await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 60000 })
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(4000)
   log(`Page URL: ${page.url()}`)
 
   const frame = await getPortalFrame(page)
@@ -459,27 +496,39 @@ async function scrapeBillsFromPortal(
         }
         if (v2Params) {
           const userAgent = await frame.evaluate(() => navigator.userAgent).catch(() => undefined)
+          const apiDomain = v2Params.apiDomain
+          if (apiDomain === "recaptcha.net") log("Using apiDomain: recaptcha.net for 2Captcha")
           log(`Solving visible reCAPTCHA v2 via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
           const token = await solveRecaptchaV2With2Captcha(
             captchaApiKey,
             page.url(),
             v2Params.siteKey,
             false,
-            userAgent
+            userAgent,
+            apiDomain
           )
           if (token) {
             await injectRecaptchaToken(frame, token)
-            log("Injected reCAPTCHA v2 token into g-recaptcha-response.")
-            await page.waitForTimeout(2000)
+            log("Injected reCAPTCHA v2 token; triggering callback then submit.")
+            await page.waitForTimeout(2500)
             let submitted = false
             try {
-              const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In"), input[value*="Sign" i]').first()
-              await signInBtn.click({ timeout: 5000 })
-              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
-              log("Submitted via Sign In button with captcha token; left login.")
+              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 8000 })
+              log("Navigated after callback; left login.")
               submitted = true
             } catch {
               //
+            }
+            if (!submitted) {
+              try {
+                const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In"), input[value*="Sign" i]').first()
+                await signInBtn.click({ timeout: 5000 })
+                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
+                log("Submitted via Sign In button; left login.")
+                submitted = true
+              } catch {
+                //
+              }
             }
             if (!submitted) {
               try {
@@ -487,7 +536,7 @@ async function scrapeBillsFromPortal(
                 if (formEl) {
                   await formEl.evaluate((form: HTMLFormElement) => form.submit())
                   await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 40000 })
-                  log("Submitted via form.submit() with captcha token; left login.")
+                  log("Submitted via form.submit(); left login.")
                 }
               } catch (e) {
                 log(`Submit with token failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -667,9 +716,19 @@ export async function runEscondidoBillFetch(options?: {
   } else {
     const headless = process.env.PLAYWRIGHT_HEADED !== "1"
     const watch = process.env.ESCONDIDO_WATCH === "1"
+    const proxyServer = process.env.ESCONDIDO_PROXY_SERVER
+    const proxyAuth =
+      process.env.ESCONDIDO_PROXY_USERNAME && process.env.ESCONDIDO_PROXY_PASSWORD
+        ? {
+            username: process.env.ESCONDIDO_PROXY_USERNAME,
+            password: process.env.ESCONDIDO_PROXY_PASSWORD,
+          }
+        : undefined
+    if (proxyServer) log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
     browser = await chromium.launch({
       headless: watch ? false : headless,
       slowMo: watch ? 800 : 0,
+      proxy: proxyServer ? { server: proxyServer, ...proxyAuth } : undefined,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -685,9 +744,16 @@ export async function runEscondidoBillFetch(options?: {
   let inserted = 0
   let alreadyExisted = 0
 
+  const userAgent =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   let context: import("playwright").BrowserContext | undefined
   try {
-    context = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent,
+      locale: "en-US",
+      timezoneId: "America/Los_Angeles",
+    })
     if (process.env.CI) {
       await context.tracing.start({ screenshots: true, snapshots: true })
       log("Tracing enabled (CI): trace.zip will be saved for Playwright Trace Viewer.")
