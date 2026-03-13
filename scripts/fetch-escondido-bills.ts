@@ -205,8 +205,9 @@ async function getRecaptchaParams(
 }
 
 /**
- * Solve reCAPTCHA v2 using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2).
- * apiDomain must match how the site loads recaptcha (google.com vs recaptcha.net) or token is rejected.
+ * Solve reCAPTCHA v2 (checkbox + image challenge) using 2Captcha API.
+ * @see https://2captcha.com/api-docs/recaptcha-v2
+ * Task: RecaptchaV2TaskProxyless with websiteURL, websiteKey, isInvisible: false for visible checkbox.
  */
 async function solveRecaptchaV2With2Captcha(
   apiKey: string,
@@ -220,7 +221,7 @@ async function solveRecaptchaV2With2Captcha(
     type: "RecaptchaV2TaskProxyless",
     websiteURL: pageUrl,
     websiteKey: siteKey,
-    isInvisible,
+    isInvisible: !!isInvisible,
   }
   if (userAgent) task.userAgent = userAgent
   if (apiDomain) task.apiDomain = apiDomain
@@ -403,22 +404,31 @@ async function tryClickRecaptchaCheckbox(
 }
 
 /**
- * Inject 2Captcha token into the EXISTING g-recaptcha-response textarea that the reCAPTCHA widget created.
- * We must NOT create a new field — the server reads the widget's response. Keep it hidden.
+ * Inject 2Captcha token into the g-recaptcha-response for the VISIBLE widget (login form).
+ * When the page has both invisible and checkbox widgets, we must fill the one inside the login form.
+ * Per https://2captcha.com/api-docs/recaptcha-v2 — token goes in g-recaptcha-response or callback.
  */
 async function injectRecaptchaToken(
   frame: import("playwright").Frame,
   token: string
 ): Promise<boolean> {
   const found = await frame.evaluate((tokenValue) => {
-    const el = document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null
-      || document.querySelector<HTMLTextAreaElement>('textarea[name="g-recaptcha-response"]')
+    const form = document.querySelector("form")
+    if (!form) return false
+    const inForm =
+      form.querySelector<HTMLTextAreaElement>("#g-recaptcha-response")
+      || form.querySelector<HTMLTextAreaElement>("textarea[name='g-recaptcha-response']")
+      || form.querySelector<HTMLTextAreaElement>("textarea[id^='g-recaptcha-response']")
+    const el = inForm
+      || (document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null)
+      || document.querySelector<HTMLTextAreaElement>("textarea[name='g-recaptcha-response']")
     if (!el) return false
     el.value = tokenValue
     el.dispatchEvent(new Event("input", { bubbles: true }))
     el.dispatchEvent(new Event("change", { bubbles: true }))
 
-    const recaptchaDiv = document.querySelector("[data-sitekey]") as HTMLElement | null
+    const recaptchaDiv = form.querySelector("[data-sitekey]") as HTMLElement | null
+      || document.querySelector("[data-sitekey]") as HTMLElement | null
     const callbackName = recaptchaDiv?.getAttribute("data-callback")
     if (callbackName) {
       const fn = (window as unknown as Record<string, (t?: string) => void>)[callbackName]
@@ -554,8 +564,12 @@ async function scrapeBillsFromPortal(
           const userAgent = await frame.evaluate(() => navigator.userAgent).catch(() => undefined)
           const apiDomain = v2Params.apiDomain
           if (apiDomain === "recaptcha.net") log("Using apiDomain: recaptcha.net for 2Captcha")
-          if (v2Params.isEnterprise) log("Detected reCAPTCHA Enterprise; using 2Captcha Enterprise API.")
-          log(`Solving visible reCAPTCHA ${v2Params.isEnterprise ? "Enterprise" : "v2"} via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 20)}...)...`)
+          if (v2Params.isEnterprise) {
+            log("Site uses reCAPTCHA Enterprise; using 2Captcha Enterprise solver.")
+          } else {
+            log("Using reCAPTCHA v2 (checkbox + images) per 2Captcha API.")
+          }
+          log(`Solving via 2Captcha (sitekey: ${v2Params.siteKey.slice(0, 24)}...)...`)
           const token = v2Params.isEnterprise
             ? await solveRecaptchaV2EnterpriseWith2Captcha(
                 captchaApiKey,
