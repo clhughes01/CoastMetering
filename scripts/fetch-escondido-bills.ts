@@ -609,16 +609,23 @@ async function scrapeBillsFromPortal(
         if (token) {
           const injected = await injectRecaptchaToken(frame, token)
           if (injected) {
-            log("Injected 2Captcha token; submitting form...")
+            log("Injected 2Captcha token; clicking Sign In (so site's submit path runs)...")
+            await page.waitForTimeout(1500)
             try {
-              const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-              if (formEl) {
-                await formEl.evaluate((form: HTMLFormElement) => form.submit())
-                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 20000 })
+              const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
+              await btnByRole.click()
+              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+              submittedAfterCaptcha = true
+              log("Submitted after 2Captcha token.")
+            } catch {
+              try {
+                const submitInForm = passwordInput.locator("xpath=ancestor::form[1]").locator('input[type="submit"], button, a:has-text("Sign In")').first()
+                await submitInForm.click()
+                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
                 submittedAfterCaptcha = true
-                log("Submitted after 2Captcha token.")
-              }
-            } catch (_) {}
+                log("Submitted after 2Captcha token (fallback click).")
+              } catch (_) {}
+            }
           } else {
             log("Could not inject 2Captcha token into page.")
           }
