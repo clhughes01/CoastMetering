@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from("utility_provider_bills")
-      .select("id, property_id, utility_key, account_number, billing_period_start, billing_period_end, amount_due, due_date, pdf_url, fetched_at")
+      .select("id, property_id, utility_key, account_number, billing_period_start, billing_period_end, amount_due, due_date, pdf_url, invoice_url, source_email_id, fetched_at")
       .order("billing_period_start", { ascending: false })
 
     if (role === "manager") {

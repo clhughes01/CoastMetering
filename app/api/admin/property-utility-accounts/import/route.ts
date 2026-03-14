@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
           rows.push({ property_id, account_number })
         }
       }
+    }
     } else {
       return NextResponse.json(
         { error: "Content-Type must be application/json or text/csv" },

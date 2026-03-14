@@ -1,6 +1,8 @@
-# Escondido Water Bill Fetch (local use)
+# Escondido Water Bill Fetch
 
-This doc describes how to pull current bills from the City of Escondido’s water bill portal (Invoice Cloud) and add them to the database. **The script is for local use only** — it does not automate reCAPTCHA; if the login page shows a captcha, solve it manually in the browser.
+This doc describes how to pull current bills from the City of Escondido’s water bill portal (Invoice Cloud) and add them to the database. **Recommended:** Use **email ingest** so bills are created from the "View invoice or pay now" link in the notification email (no portal login). See `docs/ESCONDIDO_BILL_EMAIL_INGEST.md`. Bills and emails are stored and linked for later payment.
+
+**Alternative:** The Playwright script is for local use only — it does not automate reCAPTCHA; if the login page shows a captcha, solve it manually in the browser.
 
 ---
 
