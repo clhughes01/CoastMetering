@@ -10,16 +10,16 @@
  *   ESCONDIDO_LOGIN_EMAIL, ESCONDIDO_LOGIN_PASSWORD
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
- * Optional (recommended in CI — use one of these):
+ * Optional (recommended in CI for CAPTCHA/unblocking):
+ *   Bright Data Web Unlocker API (Direct API — API key only):
+ *   Set ESCONDIDO_BRIGHTDATA_API_KEY to your API key (Bearer token).
+ *   Create a Web Unlocker API at brightdata.com → Web Access APIs → Create API → Web Unlocker API;
+ *   the zone name defaults to web_unlocker1, or set ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE.
+ *   Docs: https://docs.brightdata.com/scraping-automation/web-unlocker/introduction
+ *   Quickstart: https://docs.brightdata.com/scraping-automation/web-unlocker/quickstart
+ *   First request: https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request
  *
- *   A) API key only (Unlocker API): Set ESCONDIDO_BRIGHTDATA_API_KEY (Bearer token from brightdata.com).
- *      Zone defaults to web_unlocker1; override with ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE if your zone has another name.
- *      See https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website
- *
- *   B) Proxy (Residential etc.): Set ESCONDIDO_BRIGHTDATA_USERNAME and ESCONDIDO_BRIGHTDATA_PASSWORD from your Proxy zone.
- *      Optional: ESCONDIDO_BRIGHTDATA_PROXY_PORT if not 33335.
- *
- * Optional (generic proxy): ESCONDIDO_PROXY_SERVER, ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD
+ * Optional (generic proxy for Playwright): ESCONDIDO_PROXY_SERVER, ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD
  */
 import "dotenv/config"
 
@@ -88,8 +88,9 @@ const log = (msg: string) => console.log(`[Escondido] ${msg}`)
 const UNLOCKER_API = "https://api.brightdata.com/request"
 
 /**
- * Fetch a URL via Bright Data Unlocker API (API key only).
- * @see https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website
+ * Fetch a URL via Bright Data Unlocker API (Direct API — API key only).
+ * POST /request with Authorization: Bearer <api_key>, body: { zone, url, format }.
+ * @see https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request
  */
 async function unlockerRequest(
   apiKey: string,
@@ -127,7 +128,7 @@ async function unlockerRequest(
     if (!res.ok) {
       throw new Error(`Unlocker API ${res.status}: ${raw.slice(0, 400)}${raw.length > 400 ? "..." : ""}`)
     }
-    throw new Error(`Unlocker API returned HTML instead of JSON. Check: 1) API key from brightdata.com/cp/setting/users 2) Zone is a Web Unlocker zone (Scraping automation → Web Unlocker), name exactly as in the zone (e.g. web_unlocker1).`)
+    throw new Error(`Unlocker API returned HTML instead of JSON. Check: 1) API key (Bearer) from your Web Unlocker API Overview or Account settings 2) Zone name matches your Unlocker API name (e.g. web_unlocker1). See https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request`)
   }
   if (!res.ok || data.error) {
     throw new Error(data.error || `Unlocker API ${res.status}: ${raw.slice(0, 300)}`)
@@ -936,30 +937,18 @@ export async function runEscondidoBillFetch(options?: {
   } else {
     const headless = process.env.PLAYWRIGHT_HEADED !== "1"
     const watch = process.env.ESCONDIDO_WATCH === "1"
-    const brightUser = process.env.ESCONDIDO_BRIGHTDATA_USERNAME?.trim()
-    const brightPass = process.env.ESCONDIDO_BRIGHTDATA_PASSWORD?.trim()
-    const brightPort = process.env.ESCONDIDO_BRIGHTDATA_PROXY_PORT?.trim() || "33335"
     let proxyConfig: { server: string; username?: string; password?: string } | undefined
-    if (brightUser && brightPass) {
-      proxyConfig = {
-        server: `http://brd.superproxy.io:${brightPort}`,
-        username: brightUser,
-        password: brightPass,
-      }
-      log(`Using Bright Data proxy (brd.superproxy.io:${brightPort}).`)
-    } else {
-      const proxyServer = process.env.ESCONDIDO_PROXY_SERVER
-      const proxyAuth =
-        process.env.ESCONDIDO_PROXY_USERNAME && process.env.ESCONDIDO_PROXY_PASSWORD
-          ? {
-              username: process.env.ESCONDIDO_PROXY_USERNAME,
-              password: process.env.ESCONDIDO_PROXY_PASSWORD,
-            }
-          : undefined
-      if (proxyServer) {
-        proxyConfig = { server: proxyServer, ...proxyAuth }
-        log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
-      }
+    const proxyServer = process.env.ESCONDIDO_PROXY_SERVER
+    const proxyAuth =
+      process.env.ESCONDIDO_PROXY_USERNAME && process.env.ESCONDIDO_PROXY_PASSWORD
+        ? {
+            username: process.env.ESCONDIDO_PROXY_USERNAME,
+            password: process.env.ESCONDIDO_PROXY_PASSWORD,
+          }
+        : undefined
+    if (proxyServer) {
+      proxyConfig = { server: proxyServer, ...proxyAuth }
+      log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
     }
     browser = await chromium.launch({
       headless: watch ? false : headless,

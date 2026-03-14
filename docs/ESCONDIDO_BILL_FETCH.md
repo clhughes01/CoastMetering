@@ -63,12 +63,9 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
-| ESCONDIDO_BRIGHTDATA_API_KEY | *(Optional)* Bright Data API key (Bearer token). When set, the script uses the [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser). Get the key from Bright Data account settings; create a **Web Unlocker** zone (Scraping automation → Web Unlocker) if needed. |
-| ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE | *(Optional)* Web Unlocker zone name. Defaults to `web_unlocker1`; set only if your zone has a different name. |
-| ESCONDIDO_BRIGHTDATA_USERNAME | *(Optional)* Bright Data **proxy** username (Residential etc.). From Proxy dashboard → your zone → copy Username. Use with ESCONDIDO_BRIGHTDATA_PASSWORD to route the browser through Bright Data. |
-| ESCONDIDO_BRIGHTDATA_PASSWORD | *(Optional)* Bright Data zone password from the same Proxy zone (or the password you set when creating the zone). |
-| ESCONDIDO_BRIGHTDATA_PROXY_PORT | *(Optional)* Port if your zone uses something other than 33335 (check the zone’s “Proxy parameters” or integration snippet in the dashboard). |
-| ESCONDIDO_PROXY_SERVER | *(Optional)* Generic proxy URL if not using Bright Data (e.g. `http://proxy:port`). |
+| ESCONDIDO_BRIGHTDATA_API_KEY | *(Optional)* Bright Data **Web Unlocker API** key (Bearer token). When set, the script uses the [Unlocker API](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) (Direct API, no browser). Create an API at [Bright Data](https://brightdata.com/cp/web_access/new) → Web Access APIs → Create API → **Web Unlocker API**; your API key and zone name are in the zone Overview. See [Quickstart](https://docs.brightdata.com/scraping-automation/web-unlocker/quickstart) and [Send your first request](https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request). |
+| ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE | *(Optional)* Your Unlocker API zone name (the name you gave when creating the API). Defaults to `web_unlocker1`. |
+| ESCONDIDO_PROXY_SERVER | *(Optional)* Generic proxy URL for Playwright (e.g. `http://proxy:port`) if not using the Unlocker API. |
 | ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD | *(Optional)* Proxy auth if not embedded in ESCONDIDO_PROXY_SERVER. |
 
 ### Step 4: Push and run the workflow once
@@ -394,8 +391,7 @@ Downstream you can:
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
 - **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
-  - **Option A — API key only:** Set **ESCONDIDO_BRIGHTDATA_API_KEY** to your Bright Data API key (Bearer token from account settings or from your Web Unlocker zone). The script uses the [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser, CAPTCHAs handled by Bright Data). Zone defaults to `web_unlocker1`; set **ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE** only if your zone has another name.
-  - **Option B — Proxy:** Use a **Residential** (or other) proxy zone from the **Proxy** dashboard. Set **ESCONDIDO_BRIGHTDATA_USERNAME** and **ESCONDIDO_BRIGHTDATA_PASSWORD** so the browser uses Bright Data’s proxy.
+  - **Bright Data Web Unlocker API (recommended):** Use the [new Unlocker API](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) (Direct API — API key only). Create a Web Unlocker API at [Bright Data](https://brightdata.com/cp/web_access/new) → Web Access APIs → Create API → Web Unlocker API. Set **ESCONDIDO_BRIGHTDATA_API_KEY** to your API key (Bearer token from the zone Overview). Zone name defaults to `web_unlocker1`; set **ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE** only if you gave your API a different name. See [5-minute how-to](https://docs.brightdata.com/scraping-automation/web-unlocker/five-minute-how-to) and [Send your first request](https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request).
   - **When running locally**, captcha often does not appear.
 
 - **Playwright errors on Vercel**  
