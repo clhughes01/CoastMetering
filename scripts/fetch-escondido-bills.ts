@@ -4,27 +4,26 @@
  * and inserts new bills into utility_provider_bills.
  *
  * Run: npx tsx scripts/fetch-escondido-bills.ts
- * Watch locally (see the browser): ESCONDIDO_WATCH=1 npm run fetch-escondido-bills
- * (Loads .env from project root so you don't need to pass credentials.)
+ * Watch locally: ESCONDIDO_WATCH=1 npm run fetch-escondido-bills
  *
  * Required env (or in .env):
  *   ESCONDIDO_LOGIN_EMAIL, ESCONDIDO_LOGIN_PASSWORD
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
- *   Property-to-account mapping: property_utility_accounts table in Supabase,
- *   or ESCONDIDO_PROPERTY_ACCOUNTS='{"property-uuid":"account-number",...}'
  *
- * Optional (for login pages with reCAPTCHA):
- *   OPENAI_API_KEY — When set, the script uses GPT-4o vision to solve reCAPTCHA image challenges (checkbox + grid).
- *   Login is retried until the dashboard is reached (works when no captcha appears locally).
+ * Optional (recommended in CI — use one of these):
  *
- * Optional (to reduce captcha triggers — use a residential proxy):
- *   ESCONDIDO_PROXY_SERVER — e.g. http://proxy.example.com:8080 or http://user:pass@host:port
- *   ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD — if proxy requires auth (alternative to user:pass in URL)
+ *   A) API key only (Unlocker API): Create a Web Unlocker zone at brightdata.com → Scraping automation → Web Unlocker.
+ *      Set ESCONDIDO_BRIGHTDATA_API_KEY and ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE (zone name from the Unlocker zone).
+ *      See https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website
+ *
+ *   B) Proxy (Residential etc.): Set ESCONDIDO_BRIGHTDATA_USERNAME and ESCONDIDO_BRIGHTDATA_PASSWORD from your Proxy zone.
+ *      Optional: ESCONDIDO_BRIGHTDATA_PROXY_PORT if not 33335.
+ *
+ * Optional (generic proxy): ESCONDIDO_PROXY_SERVER, ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD
  */
 import "dotenv/config"
 
 import { chromium } from "playwright"
-import OpenAI from "openai"
 import { createClient } from "@supabase/supabase-js"
 
 const PORTAL_URL = "https://www.invoicecloud.com/escondidoca"
@@ -85,6 +84,148 @@ function normalizeDate(s: string): string {
 }
 
 const log = (msg: string) => console.log(`[Escondido] ${msg}`)
+
+const UNLOCKER_API = "https://api.brightdata.com/request"
+
+/**
+ * Fetch a URL via Bright Data Unlocker API (API key only).
+ * @see https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website
+ */
+async function unlockerRequest(
+  apiKey: string,
+  zone: string,
+  url: string,
+  opts?: { method?: "GET" | "POST"; body?: string }
+): Promise<{ status_code: number; body: string; headers?: Record<string, string> }> {
+  const payload: Record<string, string> = {
+    zone,
+    url,
+    format: "raw",
+  }
+  if (opts?.method === "POST" && opts?.body) {
+    payload.method = "POST"
+    payload.body = opts.body
+  }
+  const res = await fetch(UNLOCKER_API, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(payload),
+  })
+  const data = (await res.json()) as {
+    status_code?: number
+    body?: string
+    headers?: Record<string, string>
+    error?: string
+  }
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `Unlocker API ${res.status}: ${await res.text()}`)
+  }
+  return {
+    status_code: data.status_code ?? res.status,
+    body: typeof data.body === "string" ? data.body : "",
+    headers: data.headers,
+  }
+}
+
+/**
+ * Scrape bills using only the Unlocker API (no Playwright). Requires a Web Unlocker zone.
+ * GET portal → parse login form → POST login → parse response for bills.
+ */
+async function scrapeBillsWithUnlockerApi(
+  apiKey: string,
+  zone: string,
+  loginEmail: string,
+  loginPassword: string
+): Promise<FetchedBill[]> {
+  log("Using Bright Data Unlocker API (API key + zone).")
+  const bills: FetchedBill[] = []
+  try {
+    log("Fetching portal...")
+    const first = await unlockerRequest(apiKey, zone, PORTAL_URL)
+    let html = first.body
+    if (!html || html.length < 100) {
+      log("Unlocker returned empty or short body.")
+      return bills
+    }
+    if (!/type=["']password["']/i.test(html)) {
+      const loginLinkMatch = html.match(/href=["']([^"']*customerlogin[^"']*)["']/i)
+      if (loginLinkMatch) {
+        const loginUrl = loginLinkMatch[1]!.startsWith("http") ? loginLinkMatch[1] : new URL(loginLinkMatch[1], PORTAL_URL).href
+        log("Fetching login page...")
+        const loginPage = await unlockerRequest(apiKey, zone, loginUrl)
+        html = loginPage.body
+      }
+    }
+    const loginActionMatch = html.match(/<form[^>]*action=["']([^"']+)["'][^>]*>/i)
+    const formAction = loginActionMatch
+      ? (loginActionMatch[1]!.startsWith("http") ? loginActionMatch[1] : new URL(loginActionMatch[1], PORTAL_URL).href)
+      : null
+    const hasLoginForm = /type=["']password["']/i.test(html) && /customerlogin|login/i.test(html)
+    if (formAction && hasLoginForm) {
+      const hiddenInputs = html.match(/<input[^>]*type=["']hidden["'][^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["']/gi) || []
+      const parts: string[] = []
+      for (const tag of hiddenInputs) {
+        const n = tag.match(/name=["']([^"']+)["']/i)?.[1]
+        const v = tag.match(/value=["']([^"']*)["']/i)?.[1] ?? ""
+        if (n) parts.push(`${encodeURIComponent(n)}=${encodeURIComponent(v)}`)
+      }
+      const emailName = html.match(/<input[^>]*name=["']([^"']+)["'][^>]*(?:type=["'](?:email|text)["']|placeholder=[^>]*mail)/i)?.[1]
+        || html.match(/<input[^>]*(?:type=["'](?:email|text)["']|placeholder=[^>]*mail)[^>]*name=["']([^"']+)["']/i)?.[1]
+        || "email"
+      const passName = html.match(/<input[^>]*type=["']password["'][^>]*name=["']([^"']+)["']/i)?.[1]
+        || html.match(/<input[^>]*name=["']([^"']+)["'][^>]*type=["']password["']/i)?.[1]
+        || "password"
+      parts.push(`${encodeURIComponent(emailName)}=${encodeURIComponent(loginEmail)}`)
+      parts.push(`${encodeURIComponent(passName)}=${encodeURIComponent(loginPassword)}`)
+      const body = parts.join("&")
+      log("Posting login form...")
+      const loginRes = await unlockerRequest(apiKey, zone, formAction, { method: "POST", body })
+      html = loginRes.body
+    }
+    const rows = html.split(/<tr[\s>]/i)
+    for (const row of rows) {
+      if (!row.includes("$") || row.length < 20) continue
+      const accountMatch = row.match(/account\s*#?\s*(\d{4,})/i) || row.match(/#\s*(\d{4,})/i)
+      const accountNumber = accountMatch ? accountMatch[1]!.trim() : ""
+      const amountMatch = row.match(/\$[\d,]+\.?\d*/)
+      const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
+      const dateMatch = row.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
+      const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
+      const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
+      const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
+      const hrefMatch = row.match(/href=["']([^"']*(?:View\s*Invoice|View)[^"']*)["']/i) || row.match(/href=["']([^"']+)["']/i)
+      const href = hrefMatch ? hrefMatch[1]!.replace(/^["']|["']$/g, "") : ""
+      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
+      if (accountNumber || amount > 0 || periodStart) {
+        bills.push({
+          accountNumber,
+          periodStart,
+          periodEnd,
+          amountDue: amount,
+          dueDate,
+          externalId: href ? href.slice(0, 500) : null,
+          pdfUrl,
+        })
+      }
+    }
+    const seen = new Set<string>()
+    const unique: FetchedBill[] = []
+    for (const b of bills) {
+      const key = `${b.accountNumber}|${b.periodStart}|${b.amountDue}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push(b)
+    }
+    log(`Done (Unlocker API). Parsed ${unique.length} bill(s).`)
+    return unique
+  } catch (e) {
+    log(`Unlocker API failed: ${e instanceof Error ? e.message : String(e)}`)
+    return []
+  }
+}
 
 /** Get reCAPTCHA v2 params only (div with data-sitekey, no data-action). */
 async function getRecaptchaV2Params(
@@ -413,144 +554,6 @@ async function tryClickRecaptchaCheckbox(
   return false
 }
 
-/** Find the reCAPTCHA challenge iframe (image grid). */
-function getChallengeFrame(page: import("playwright").Page): import("playwright").Frame | null {
-  for (const f of page.frames()) {
-    const u = f.url()
-    if (!/recaptcha|google\.com|recaptcha\.net/i.test(u)) continue
-    if (/bframe|api2\/frame|enterprise\/frame/i.test(u)) return f
-  }
-  return null
-}
-
-/**
- * Solve one reCAPTCHA image challenge: screenshot each tile separately, send all to GPT-4o, get indices to click.
- * Per-tile images give much better accuracy than one grid image.
- */
-async function solveRecaptchaImageWithVision(
-  page: import("playwright").Page,
-  roundLabel: string
-): Promise<boolean> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim()
-  if (!apiKey) return false
-  const challengeFrame = getChallengeFrame(page)
-  if (!challengeFrame) return false
-  let instruction = ""
-  try {
-    instruction = await challengeFrame.locator(".rc-imageselect-desc-wrapper").first().innerText({ timeout: 3000 }).catch(() => "")
-    instruction = instruction.replace(/\s+/g, " ").trim()
-  } catch {
-    return false
-  }
-  if (!instruction) return false
-  log(`${roundLabel} Image challenge: "${instruction.slice(0, 60)}${instruction.length > 60 ? "..." : ""}"`)
-  const table = challengeFrame.locator("table.rc-imageselect-table-33, table.rc-imageselect-table-44").first()
-  const tiles = table.locator("td")
-  const tileCount = await tiles.count().catch(() => 0)
-  if (tileCount === 0) return false
-  try {
-    const tileImages: string[] = []
-    for (let i = 0; i < tileCount; i++) {
-      const buf = await tiles.nth(i).screenshot({ timeout: 3000 }).catch(() => null)
-      if (buf && buf.length > 50) tileImages.push(buf.toString("base64"))
-      else tileImages.push("")
-    }
-    if (tileImages.every((b) => !b)) return false
-    const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
-      {
-        type: "text",
-        text: `You are solving a reCAPTCHA image challenge. The instruction is: "${instruction}"
-
-I am sending you ${tileCount} tile images in order: first image = index 0, second = index 1, ... last = index ${tileCount - 1}.
-
-Rules: Only include the index if the tile CLEARLY and unambiguously shows what the instruction asks for. Partial matches or doubtful tiles must be excluded. When in doubt, leave it out.
-
-Reply with ONLY a JSON array of 0-based indices that match. Example: [0,2,5]. If none match, reply [].`,
-      },
-    ]
-    for (let i = 0; i < tileImages.length; i++) {
-      if (tileImages[i]) content.push({ type: "image_url", image_url: { url: `data:image/png;base64,${tileImages[i]}` } })
-    }
-    const openai = new OpenAI({ apiKey })
-    const resp = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content }],
-      max_tokens: 150,
-    })
-    const text = resp.choices[0]?.message?.content?.trim() ?? ""
-    const jsonMatch = text.match(/\[[\d,\s]*\]/)
-    const indices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : []
-    if (!Array.isArray(indices) || indices.length === 0) {
-      log(`${roundLabel} Vision returned no tiles to click; clicking Verify anyway.`)
-    } else {
-      const toClick = indices.filter((i) => i >= 0 && i < tileCount)
-      for (const i of toClick) {
-        await tiles.nth(i).click({ timeout: 2000 }).catch(() => {})
-      }
-      log(`${roundLabel} Clicked ${toClick.length} tile(s): [${toClick.join(",")}].`)
-    }
-    await page.waitForTimeout(800)
-    const verifyBtn = challengeFrame.locator("#recaptcha-verify-button").first()
-    await verifyBtn.click({ timeout: 3000 }).catch(() => {})
-    log(`${roundLabel} Clicked Verify.`)
-    return true
-  } catch (e) {
-    log(`${roundLabel} Vision failed: ${e instanceof Error ? e.message : String(e)}`)
-    return false
-  }
-}
-
-/**
- * Complete reCAPTCHA: click checkbox, then for each image challenge (one or more grids) solve with AI, click Verify.
- * When no more image challenge is shown, click Sign In once.
- */
-async function solveCaptchaWithAI(
-  page: import("playwright").Page,
-  frame: import("playwright").Frame,
-  passwordInput: import("playwright").Locator,
-  loginPassword: string
-): Promise<boolean> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim()
-  const maxImageRounds = 5
-  await passwordInput.fill(loginPassword)
-  await page.waitForTimeout(1000)
-  log("Clicking reCAPTCHA checkbox...")
-  const clicked = await tryClickRecaptchaCheckbox(page)
-  if (!clicked) return false
-  log("Waiting for image challenge (if any)...")
-  await page.waitForTimeout(3500)
-  let round = 0
-  for (let r = 0; r < maxImageRounds; r++) {
-    if (!page.url().includes("customerlogin")) return true
-    const challengeFrame = getChallengeFrame(page)
-    if (!challengeFrame) {
-      log("No image challenge; captcha may be satisfied.")
-      break
-    }
-    round++
-    const roundLabel = `[Captcha ${round}/${maxImageRounds}]`
-    const attempted = await solveRecaptchaImageWithVision(page, roundLabel)
-    if (!attempted) break
-    log(`${roundLabel} Waiting for next challenge or for captcha to close...`)
-    await page.waitForTimeout(4000)
-  }
-  log("Clicking Sign In (after captcha)...")
-  try {
-    const signInBtn = frame.locator('input[type="submit"], button[type="submit"], button:has-text("Sign In")').first()
-    await signInBtn.click({ timeout: 3000 }).catch(() => {})
-    await page.waitForTimeout(3000)
-    if (!page.url().includes("customerlogin")) return true
-    const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-    if (formEl) {
-      await formEl.evaluate((form: HTMLFormElement) => form.submit())
-      await page.waitForTimeout(4000)
-    }
-  } catch {
-    //
-  }
-  return !page.url().includes("customerlogin")
-}
-
 /**
  * Inject 2Captcha token into the g-recaptcha-response for the VISIBLE widget (login form).
  * When the page has both invisible and checkbox widgets, we must fill the one inside the login form.
@@ -664,7 +667,8 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Login with retries: fill form → Sign In → if captcha, solve with AI (or checkbox only) → retry until dashboard or max attempts
+  // 2) Login with retries: fill form → Sign In → if captcha, click checkbox and submit → retry until dashboard or max attempts
+  // With Bright Data Web Unlocker proxy, CAPTCHAs are typically avoided or handled.
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
@@ -693,7 +697,7 @@ async function scrapeBillsFromPortal(
     }
     await page.waitForTimeout(4000)
     if (!page.url().includes("customerlogin")) {
-      log("Reached dashboard (no captcha or already solved).")
+      log("Reached dashboard (no captcha or proxy handled it).")
       break
     }
     const bodyText = await frame.locator("body").innerText().catch(() => "")
@@ -702,33 +706,23 @@ async function scrapeBillsFromPortal(
       await page.waitForTimeout(3000)
       if (!page.url().includes("customerlogin")) break
     }
-    log("Captcha required; solving...")
-    const openaiKey = process.env.OPENAI_API_KEY?.trim()
-    if (openaiKey) {
-      const gotIn = await solveCaptchaWithAI(page, frame, passwordInput, loginPassword)
-      if (gotIn) {
-        log("AI captcha solve succeeded.")
-        break
-      }
-    } else {
-      await passwordInput.fill(loginPassword)
-      await page.waitForTimeout(1000)
-      const clicked = await tryClickRecaptchaCheckbox(page)
-      if (clicked) {
-        await page.waitForTimeout(4000)
-        try {
-          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-          if (formEl) {
-            await formEl.evaluate((form: HTMLFormElement) => form.submit())
-            await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
-            log("Submitted after clicking checkbox.")
-            break
-          }
-        } catch {
-          //
+    log("Captcha shown; re-filling password, clicking checkbox, then submitting...")
+    await passwordInput.fill(loginPassword)
+    await page.waitForTimeout(1000)
+    const clicked = await tryClickRecaptchaCheckbox(page)
+    if (clicked) {
+      await page.waitForTimeout(4000)
+      try {
+        const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+        if (formEl) {
+          await formEl.evaluate((form: HTMLFormElement) => form.submit())
+          await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
+          log("Submitted after checkbox.")
+          break
         }
+      } catch {
+        //
       }
-      log("Set OPENAI_API_KEY to solve image challenges in CI.")
     }
     await page.waitForTimeout(2000)
   }
@@ -876,25 +870,92 @@ export async function runEscondidoBillFetch(options?: {
   const supabase = getSupabase()
   const accountToProperty = await getPropertyAccountMapping(supabase)
 
+  const unlockerApiKey = process.env.ESCONDIDO_BRIGHTDATA_API_KEY?.trim()
+  const unlockerZone = process.env.ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE?.trim()
+  if (unlockerApiKey && unlockerZone) {
+    const bills = await scrapeBillsWithUnlockerApi(unlockerApiKey, unlockerZone, loginEmail, loginPassword)
+    console.log(`Scraped ${bills.length} bill(s) from portal (Unlocker API). Property mapping has ${accountToProperty.size} account(s).`)
+    const errors: string[] = []
+    let inserted = 0
+    const defaultAccount =
+      accountToProperty.size === 1 ? Array.from(accountToProperty.keys())[0] : null
+    const defaultPropertyId = defaultAccount ? accountToProperty.get(defaultAccount) : null
+    for (const bill of bills) {
+      if (!bill.periodStart && !bill.pdfUrl) {
+        errors.push(`Skipped bill (no period or PDF): ${JSON.stringify(bill)}`)
+        continue
+      }
+      const periodStart = bill.periodStart || new Date().toISOString().slice(0, 10)
+      const periodEnd = bill.periodEnd || periodStart
+      const accountNumber = bill.accountNumber || defaultAccount || ""
+      const propertyId = accountToProperty.get(accountNumber) || defaultPropertyId
+      if (!propertyId) {
+        errors.push(`No property mapped for account "${accountNumber}", skipping bill ${periodStart}`)
+        continue
+      }
+      const { error } = await supabase
+        .from("utility_provider_bills")
+        .upsert(
+          {
+            property_id: propertyId,
+            utility_key: UTILITY_KEY,
+            account_number: accountNumber,
+            billing_period_start: periodStart,
+            billing_period_end: periodEnd,
+            amount_due: bill.amountDue >= 0 ? bill.amountDue : 0,
+            due_date: bill.dueDate,
+            external_id: bill.externalId,
+            pdf_url: bill.pdfUrl,
+            fetched_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "property_id,utility_key,billing_period_start", ignoreDuplicates: true }
+        )
+      if (error) {
+        errors.push(`Insert failed ${periodStart}: ${error.message}`)
+      } else {
+        inserted++
+      }
+    }
+    console.log(`Inserted ${inserted} new bill(s).`)
+    return { inserted, errors }
+  }
+
   let browser: Awaited<ReturnType<typeof chromium.launch>> | Awaited<ReturnType<typeof chromium.connect>>
   if (options?.browserWSEndpoint) {
     browser = await chromium.connectOverCDP(options.browserWSEndpoint)
   } else {
     const headless = process.env.PLAYWRIGHT_HEADED !== "1"
     const watch = process.env.ESCONDIDO_WATCH === "1"
-    const proxyServer = process.env.ESCONDIDO_PROXY_SERVER
-    const proxyAuth =
-      process.env.ESCONDIDO_PROXY_USERNAME && process.env.ESCONDIDO_PROXY_PASSWORD
-        ? {
-            username: process.env.ESCONDIDO_PROXY_USERNAME,
-            password: process.env.ESCONDIDO_PROXY_PASSWORD,
-          }
-        : undefined
-    if (proxyServer) log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
+    const brightUser = process.env.ESCONDIDO_BRIGHTDATA_USERNAME?.trim()
+    const brightPass = process.env.ESCONDIDO_BRIGHTDATA_PASSWORD?.trim()
+    const brightPort = process.env.ESCONDIDO_BRIGHTDATA_PROXY_PORT?.trim() || "33335"
+    let proxyConfig: { server: string; username?: string; password?: string } | undefined
+    if (brightUser && brightPass) {
+      proxyConfig = {
+        server: `http://brd.superproxy.io:${brightPort}`,
+        username: brightUser,
+        password: brightPass,
+      }
+      log(`Using Bright Data proxy (brd.superproxy.io:${brightPort}).`)
+    } else {
+      const proxyServer = process.env.ESCONDIDO_PROXY_SERVER
+      const proxyAuth =
+        process.env.ESCONDIDO_PROXY_USERNAME && process.env.ESCONDIDO_PROXY_PASSWORD
+          ? {
+              username: process.env.ESCONDIDO_PROXY_USERNAME,
+              password: process.env.ESCONDIDO_PROXY_PASSWORD,
+            }
+          : undefined
+      if (proxyServer) {
+        proxyConfig = { server: proxyServer, ...proxyAuth }
+        log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
+      }
+    }
     browser = await chromium.launch({
       headless: watch ? false : headless,
       slowMo: watch ? 800 : 0,
-      proxy: proxyServer ? { server: proxyServer, ...proxyAuth } : undefined,
+      proxy: proxyConfig,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",

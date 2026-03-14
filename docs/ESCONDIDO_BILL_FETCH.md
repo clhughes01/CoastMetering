@@ -63,8 +63,12 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
-| OPENAI_API_KEY | *(Optional)* OpenAI API key; when set, the script uses GPT-4o vision to solve reCAPTCHA image challenges (checkbox + grid). Login is retried until the dashboard is reached. Required in CI if the login page shows reCAPTCHA. |
-| ESCONDIDO_PROXY_SERVER | *(Optional)* Residential proxy URL (e.g. `http://gate.dc:port` or `http://user:pass@host:port`) to reduce captcha triggers; see [bypass captcha with proxies](https://iproyal.com/blog/bypass-captcha/). |
+| ESCONDIDO_BRIGHTDATA_API_KEY | *(Optional)* Bright Data API key. Use with ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE for [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser). Create a **Web Unlocker** zone; zone name + API key are in the zone Overview. |
+| ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE | *(Optional)* Web Unlocker zone name (e.g. `web_unlocker1`). Use with ESCONDIDO_BRIGHTDATA_API_KEY. |
+| ESCONDIDO_BRIGHTDATA_USERNAME | *(Optional)* Bright Data **proxy** username (Residential etc.). From Proxy dashboard → your zone → copy Username. Use with ESCONDIDO_BRIGHTDATA_PASSWORD to route the browser through Bright Data. |
+| ESCONDIDO_BRIGHTDATA_PASSWORD | *(Optional)* Bright Data zone password from the same Proxy zone (or the password you set when creating the zone). |
+| ESCONDIDO_BRIGHTDATA_PROXY_PORT | *(Optional)* Port if your zone uses something other than 33335 (check the zone’s “Proxy parameters” or integration snippet in the dashboard). |
+| ESCONDIDO_PROXY_SERVER | *(Optional)* Generic proxy URL if not using Bright Data (e.g. `http://proxy:port`). |
 | ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD | *(Optional)* Proxy auth if not embedded in ESCONDIDO_PROXY_SERVER. |
 
 ### Step 4: Push and run the workflow once
@@ -390,9 +394,9 @@ Downstream you can:
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
 - **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
-  - The Invoice Cloud login uses reCAPTCHA, which can block automated logins (especially in CI). Set **OPENAI_API_KEY** so the script uses GPT-4o vision to solve the checkbox and any image-grid challenge. Login is retried up to 8 times until the dashboard is reached. In CI, add **OPENAI_API_KEY** as a repo secret (Settings → Secrets and variables → Actions).
-  - **When running locally**, captcha often does not appear; the script will sign in on the first attempt without solving.
-  - **To reduce captcha triggers:** Use a **residential proxy**. Per [How to Bypass CAPTCHA (IPRoyal)](https://iproyal.com/blog/bypass-captcha/), datacenter IPs (e.g. GitHub Actions) are more likely to get CAPTCHAs. Set **ESCONDIDO_PROXY_SERVER** (and optionally ESCONDIDO_PROXY_USERNAME / ESCONDIDO_PROXY_PASSWORD). The script also sets a realistic User-Agent and locale.
+  - **Option A — API key only:** Create a **Web Unlocker** zone at [Bright Data](https://brightdata.com/cp/zones) → Scraping automation → **Web Unlocker**. In the zone’s Overview you’ll see the **zone name** and **API key**. Set **ESCONDIDO_BRIGHTDATA_API_KEY** and **ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE**. The script will use the [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser, CAPTCHAs handled by Bright Data).
+  - **Option B — Proxy:** Use a **Residential** (or other) proxy zone from the **Proxy** dashboard. Set **ESCONDIDO_BRIGHTDATA_USERNAME** and **ESCONDIDO_BRIGHTDATA_PASSWORD** so the browser uses Bright Data’s proxy.
+  - **When running locally**, captcha often does not appear.
 
 - **Playwright errors on Vercel**  
   - Do not run the Playwright script inside Vercel. Run it in a separate environment (GitHub Actions, Railway, server, etc.) as above.
