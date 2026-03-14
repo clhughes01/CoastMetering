@@ -64,6 +64,16 @@ function resolveUrl(href: string, baseUrl: string): string {
   }
 }
 
+/** Only allow URLs that are the actual bill document (docs.onlinebiller.com or PDF). Reject compliance, feed, rss, etc. */
+function isValidDocumentUrl(url: string): boolean {
+  const u = url.toLowerCase()
+  if (u.includes("compliance.") || u.includes("/feed") || u.includes("rss") || u.includes(".xml") || u.includes("wordpress")) return false
+  if (u.includes("onlinebiller.com") && u.includes("documents.php")) return true
+  if (u.includes("onlinebiller.com")) return true
+  if (u.endsWith(".pdf")) return true
+  return false
+}
+
 /** Parse invoice page HTML for account number, amount, dates, and PDF link */
 export function parseInvoicePage(html: string, pageUrl: string): {
   accountNumber: string
@@ -117,6 +127,10 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     const inTable = html.match(/Account\s*#?[^<]*<\/[^>]+>\s*<[^>]+>[^<]*(\d{8,12})/i)
     if (inTable && inTable[1]) accountNumber = inTable[1].trim()
   }
+  if (!accountNumber) {
+    const nearAccount = html.match(/(?:Account\s*#?|account\s*#?|ACCOUNT\s*NUMBER)[\s\S]{0,200}?(\d{10})\b/)
+    if (nearAccount && nearAccount[1]) accountNumber = nearAccount[1].trim()
+  }
 
   const amountMatch = html.match(/\$[\d,]+\.?\d*/)
   if (amountMatch) amountDue = parseFloat(amountMatch[0].replace(/[$,]/g, "")) || 0
@@ -133,18 +147,22 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   // PDF / document link: On "Your Invoice" page the blue "View Invoice" link goes to the actual bill (often docs.onlinebiller.com).
   let pdfUrl: string | null = null
 
-  // 1) Direct link to document host (docs.onlinebiller.com/documents.php) = the actual bill — prefer this
+  // 1) Direct link to document host (docs.onlinebiller.com/documents.php) = the actual bill — only valid document URL
   const docHostRegex = new RegExp(`href=["'](https?://[^"']*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"']*)["']`, "gi")
   let docMatch = docHostRegex.exec(html)
   if (docMatch && docMatch[1]) {
-    pdfUrl = docMatch[1].trim()
+    const u = docMatch[1].trim()
+    if (isValidDocumentUrl(u)) pdfUrl = u
   }
   if (!pdfUrl) {
     const docUrlAnywhere = html.match(new RegExp(`(https?://[^"'\\s<>]*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"'\\s<>]*)`, "i"))
-    if (docUrlAnywhere && docUrlAnywhere[1]) pdfUrl = docUrlAnywhere[1].trim()
+    if (docUrlAnywhere && docUrlAnywhere[1]) {
+      const u = docUrlAnywhere[1].trim()
+      if (isValidDocumentUrl(u)) pdfUrl = u
+    }
   }
 
-  // 2) "View Invoice" link on the summary page (Options column) — href may be relative or go to invoicecloud then redirect
+  // 2) "View Invoice" link on the summary page — use only if href looks like portal (we'll follow it); never use compliance/feed
   if (!pdfUrl) {
     const linkBlockRegex = /<a\s+([^>]*)>([\s\S]*?)<\/a>/gi
     let linkMatch: RegExpExecArray | null
@@ -156,7 +174,9 @@ export function parseInvoicePage(html: string, pageUrl: string): {
         if (hrefMatch && hrefMatch[1]) {
           const raw = hrefMatch[1].trim()
           if (raw && !raw.startsWith("javascript:")) {
-            pdfUrl = resolveUrl(raw, pageUrl)
+            const resolved = resolveUrl(raw, pageUrl)
+            if (isValidDocumentUrl(resolved)) pdfUrl = resolved
+            else if (resolved.includes("invoicecloud.com") && !resolved.includes("compliance") && !resolved.includes("/feed")) pdfUrl = resolved
             break
           }
         }
@@ -164,63 +184,46 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     }
   }
 
-  // 3) JavaScript that opens the document URL (e.g. window.open or location)
+  // 3) JavaScript: only accept onlinebiller.com document URL, never compliance/feed
   if (!pdfUrl) {
     const jsDocUrl = html.match(new RegExp(`["'](https?://[^"']*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"']*)["']`, "i"))
-    if (jsDocUrl && jsDocUrl[1]) pdfUrl = jsDocUrl[1].trim()
+    if (jsDocUrl && jsDocUrl[1]) {
+      const u = jsDocUrl[1].trim()
+      if (isValidDocumentUrl(u)) pdfUrl = u
+    }
   }
   if (!pdfUrl) {
     const pdfHrefPatterns = [
       /<a\s+[^>]*href=["']([^"']*\.pdf[^"']*)["']/i,
-      /href=["']([^"']*(?:\.pdf|download\.aspx|pdf\.aspx|getpdf|viewpdf|downloadpdf|invoice\.aspx)[^"']*)["']/i,
-      /href=["']([^"']*(?:download|pdf|invoice)[^"']*)["']/i,
+      /href=["']([^"']*(?:documents\.php|download\.aspx|pdf\.aspx|getpdf|viewpdf)[^"']*)["']/i,
     ]
     for (const re of pdfHrefPatterns) {
       const match = html.match(re)
       if (match && match[1]) {
-        const raw = match[1].trim()
-        if (raw && !raw.startsWith("javascript:")) {
-          pdfUrl = resolveUrl(raw, pageUrl)
+        const resolved = resolveUrl(match[1].trim(), pageUrl)
+        if (isValidDocumentUrl(resolved)) {
+          pdfUrl = resolved
           break
         }
       }
     }
   }
 
-  // 3) Button/link with onclick that opens a URL (e.g. window.open('...') or location.href='...')
-  if (!pdfUrl) {
-    const jsUrlPatterns = [
-      /(?:window\.open|location\.href|location\s*=\s*)\s*\(\s*["']([^"']+)["']/i,
-      /(?:window\.open|location\.href)\s*\(\s*["']([^"']+)["']/i,
-      /["'](https?:\/\/[^"']*(?:\.pdf|invoice|download)[^"']*)["']/i,
-    ]
-    for (const re of jsUrlPatterns) {
-      const match = html.match(re)
-      if (match && match[1]) {
-        const raw = match[1].trim()
-        if (raw && raw.startsWith("http") && raw.includes("invoicecloud")) {
-          pdfUrl = raw
-          break
-        }
-      }
-    }
-  }
-
-  // 4) data-url, data-href, data-pdf on buttons/links
+  // 4) data-url / data-href only if valid document
   if (!pdfUrl) {
     const dataUrlMatch = html.match(/data-(?:pdf-)?(?:url|href)=["']([^"']+)["']/i)
     if (dataUrlMatch && dataUrlMatch[1]) {
-      const raw = dataUrlMatch[1].trim()
-      if (raw && !raw.startsWith("javascript:")) pdfUrl = resolveUrl(raw, pageUrl)
+      const resolved = resolveUrl(dataUrlMatch[1].trim(), pageUrl)
+      if (isValidDocumentUrl(resolved)) pdfUrl = resolved
     }
   }
 
-  // 5) Form action that looks like PDF/invoice/download
+  // 5) Form action only if valid document
   if (!pdfUrl) {
-    const formMatch = html.match(/<form[^>]*action=["']([^"']*(?:pdf|download|invoice)[^"']*)["']/i)
+    const formMatch = html.match(/<form[^>]*action=["']([^"']*(?:pdf|documents\.php)[^"']*)["']/i)
     if (formMatch && formMatch[1]) {
-      const raw = formMatch[1].trim()
-      if (raw && !raw.startsWith("javascript:")) pdfUrl = resolveUrl(raw, pageUrl)
+      const resolved = resolveUrl(formMatch[1].trim(), pageUrl)
+      if (isValidDocumentUrl(resolved)) pdfUrl = resolved
     }
   }
 
@@ -295,33 +298,38 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
       let pageHtml = await res.text()
       let parsed = parseInvoicePage(pageHtml, invoiceUrl)
 
-      // Step 2: "View invoice" on the bill page opens the document (often redirects to docs.onlinebiller.com). Use final URL after redirects.
+      // Step 2: "View invoice" on the summary page opens the document. Follow the link and use final URL only if it's the real bill (onlinebiller.com or PDF). Never use compliance/feed.
       const viewInvoiceUrl = parsed.pdfUrl
-      if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf")) {
+      if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && !isValidDocumentUrl(viewInvoiceUrl)) {
         try {
           const res2 = await fetch(viewInvoiceUrl, fetchOptions)
           const contentType = res2.headers.get("content-type") ?? ""
           const finalUrl = res2.url || viewInvoiceUrl
-          if (contentType.toLowerCase().includes("application/pdf")) {
+          if (!isValidDocumentUrl(finalUrl) && (finalUrl.includes("compliance.") || finalUrl.includes("/feed"))) {
+            parsed = { ...parsed, pdfUrl: null }
+          } else if (contentType.toLowerCase().includes("application/pdf")) {
             parsed = { ...parsed, pdfUrl: finalUrl }
-          } else if (finalUrl.includes(DOCUMENT_DOMAIN)) {
+          } else if (finalUrl.includes(DOCUMENT_DOMAIN) && isValidDocumentUrl(finalUrl)) {
             const pageHtml2 = await res2.text()
             const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
             parsed = { ...parsed, pdfUrl: finalUrl }
             if (parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
             if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
             if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
+          } else if (isValidDocumentUrl(finalUrl)) {
+            parsed = { ...parsed, pdfUrl: finalUrl }
           } else {
             const pageHtml2 = await res2.text()
             const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
-            if (parsed2.pdfUrl) parsed = { ...parsed, pdfUrl: parsed2.pdfUrl }
-            else parsed = { ...parsed, pdfUrl: finalUrl }
+            const candidateUrl = parsed2.pdfUrl && isValidDocumentUrl(parsed2.pdfUrl) ? parsed2.pdfUrl : (isValidDocumentUrl(finalUrl) ? finalUrl : null)
+            if (candidateUrl) parsed = { ...parsed, pdfUrl: candidateUrl }
+            else parsed = { ...parsed, pdfUrl: null }
             if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
             if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
             if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
           }
         } catch {
-          if (viewInvoiceUrl) parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
+          parsed = { ...parsed, pdfUrl: isValidDocumentUrl(viewInvoiceUrl) ? viewInvoiceUrl : null }
         }
       }
 
@@ -340,7 +348,7 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
         billing_period_end: periodEnd,
         amount_due: parsed.amountDue >= 0 ? parsed.amountDue : 0,
         due_date: parsed.dueDate,
-        pdf_url: parsed.pdfUrl,
+        pdf_url: parsed.pdfUrl && isValidDocumentUrl(parsed.pdfUrl) ? parsed.pdfUrl : null,
         external_id: invoiceUrl.slice(0, 500),
         invoice_url: invoiceUrl,
         source_email_id: emailId,
