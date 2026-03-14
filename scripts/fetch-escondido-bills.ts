@@ -584,6 +584,7 @@ async function scrapeBillsFromPortal(
     await page.waitForTimeout(1000)
 
     let submittedAfterCaptcha = false
+    let injectedTokenThisAttempt = false
     if (twoCaptchaApiKey) {
       const params = await getRecaptchaV2ParamsLenient(frame)
       if (params?.siteKey) {
@@ -609,6 +610,7 @@ async function scrapeBillsFromPortal(
         if (token) {
           const injected = await injectRecaptchaToken(frame, token)
           if (injected) {
+            injectedTokenThisAttempt = true
             log("Injected 2Captcha token; clicking Sign In (so site's submit path runs)...")
             await page.waitForTimeout(1500)
             try {
@@ -624,7 +626,9 @@ async function scrapeBillsFromPortal(
                 await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
                 submittedAfterCaptcha = true
                 log("Submitted after 2Captcha token (fallback click).")
-              } catch (_) {}
+              } catch (_) {
+                log("Sign In click did not navigate; will retry next attempt (do not click checkbox — it would clear the token).")
+              }
             }
           } else {
             log("Could not inject 2Captcha token into page.")
@@ -634,7 +638,7 @@ async function scrapeBillsFromPortal(
         log("Could not get reCAPTCHA siteKey from page.")
       }
     }
-    if (!submittedAfterCaptcha) {
+    if (!submittedAfterCaptcha && !injectedTokenThisAttempt) {
       const clicked = await tryClickRecaptchaCheckbox(page)
       if (clicked) {
         await page.waitForTimeout(4000)
