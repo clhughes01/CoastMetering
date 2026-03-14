@@ -870,7 +870,8 @@ export async function runEscondidoBillFetch(options?: {
       proxyConfig = { server: proxyServer, ...proxyAuth }
       log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
     }
-    browser = await chromium.launch({
+    const useChrome = process.env.ESCONDIDO_USE_CHROME === "1"
+    const launchOpts: Parameters<typeof chromium.launch>[0] = {
       headless: watch ? false : headless,
       slowMo: watch ? 800 : 0,
       proxy: proxyConfig,
@@ -881,7 +882,24 @@ export async function runEscondidoBillFetch(options?: {
         "--disable-blink-features=AutomationControlled",
         "--window-size=1280,720",
       ],
-    })
+    }
+    if (useChrome) {
+      launchOpts.channel = "chrome"
+      log("Launching Google Chrome (system) — set ESCONDIDO_USE_CHROME=1")
+    } else {
+      log("Launching Chromium (Playwright)")
+    }
+    try {
+      browser = await chromium.launch(launchOpts)
+    } catch (e) {
+      if (useChrome) {
+        log("Chrome not found, falling back to Playwright Chromium")
+        delete launchOpts.channel
+        browser = await chromium.launch(launchOpts)
+      } else {
+        throw e
+      }
+    }
     if (watch) log("Watch mode: browser visible, actions slowed so you can see each step.")
   }
 
