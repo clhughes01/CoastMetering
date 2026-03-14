@@ -154,13 +154,13 @@ A **daily cron** connects to your email inbox via IMAP, fetches recent bill emai
    - `ESCONDIDO_IMAP_HOST` — e.g. `imap.gmail.com`, `outlook.office365.com`, or your provider’s IMAP host.
    - `ESCONDIDO_IMAP_USER` — Full email address.
    - `ESCONDIDO_IMAP_PASSWORD` — Password or **App Password** (Gmail: use an App Password if 2FA is on).
-   - Optional: `ESCONDIDO_IMAP_PORT` (default 993), `ESCONDIDO_IMAP_TLS` (default true), `ESCONDIDO_IMAP_MAX_EMAILS` (default 20 per run), `ESCONDIDO_IMAP_DAYS_BACK` (default 7).
+   - Optional: `ESCONDIDO_IMAP_PORT` (default 993), `ESCONDIDO_IMAP_TLS` (default true), `ESCONDIDO_IMAP_MAX_EMAILS` (default 50 per run), `ESCONDIDO_IMAP_DAYS_BACK` (default 7).
 
 3. **Deploy**  
    The repo includes `vercel.json` with a cron that calls `/api/cron/ingest-escondido-emails` **once a day at 12:00 UTC**. On Vercel, set `CRON_SECRET` in the project env; the Cron Job will send it when invoking the route.
 
 4. **Done**  
-   Each run fetches the last 7 days of mail (up to 20 messages), skips already-processed emails, and ingests new ones. Bills are created and linked to the stored email and invoice URL.
+   Each run fetches the last 7 days of mail (up to 50 messages, most recent first), skips already-processed emails, and ingests new ones. Bills are created and linked to the stored email and invoice URL.
 
 To run the job manually:  
 `GET https://your-app.vercel.app/api/cron/ingest-escondido-emails` with `Authorization: Bearer YOUR_CRON_SECRET` (or `?secret=YOUR_CRON_SECRET`).
@@ -248,6 +248,6 @@ curl -X POST "https://your-app.vercel.app/api/ingest/escondido-bill-email" \
 | INGEST_ESCONDIDO_EMAIL_SECRET | For POST ingest | Bearer token for `POST /api/ingest/escondido-bill-email`. |
 | NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY | Yes | Used to insert emails and bills. |
 
-Optional for cron: `ESCONDIDO_IMAP_PORT` (993), `ESCONDIDO_IMAP_TLS` (true), `ESCONDIDO_IMAP_MAX_EMAILS` (20), `ESCONDIDO_IMAP_DAYS_BACK` (7). **ESCONDIDO_IMAP_ALLOWED_FORWARDERS** — Comma-separated list of sender addresses to treat as bill emails (e.g. when bills are forwarded). Default includes `coastmetering@gmail.com`.
+Optional for cron: `ESCONDIDO_IMAP_PORT` (993), `ESCONDIDO_IMAP_TLS` (true), `ESCONDIDO_IMAP_MAX_EMAILS` (50), `ESCONDIDO_IMAP_DAYS_BACK` (7). **ESCONDIDO_IMAP_ALLOWED_FORWARDERS** — Comma-separated list of sender addresses to treat as bill emails (e.g. when bills are forwarded). Default includes `coastmetering@gmail.com`.
 
 Property → account mapping must exist in `property_utility_accounts` (utility_key = `escondido_water`) so bills can be attached to the correct property. If only one account is mapped, that property is used for all ingested bills from the email.

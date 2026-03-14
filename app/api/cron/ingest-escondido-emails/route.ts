@@ -10,7 +10,7 @@ const IMAP_USER = process.env.ESCONDIDO_IMAP_USER?.trim()
 const IMAP_PASSWORD = process.env.ESCONDIDO_IMAP_PASSWORD?.trim()
 const IMAP_PORT = parseInt(process.env.ESCONDIDO_IMAP_PORT ?? "993", 10)
 const IMAP_TLS = process.env.ESCONDIDO_IMAP_TLS !== "false"
-const MAX_EMAILS_PER_RUN = parseInt(process.env.ESCONDIDO_IMAP_MAX_EMAILS ?? "20", 10)
+const MAX_EMAILS_PER_RUN = parseInt(process.env.ESCONDIDO_IMAP_MAX_EMAILS ?? "50", 10)
 const DAYS_BACK = parseInt(process.env.ESCONDIDO_IMAP_DAYS_BACK ?? "7", 10)
 
 /** Comma-separated addresses that may forward bill emails (e.g. coastmetering@gmail.com) */
@@ -82,7 +82,9 @@ export async function GET(request: NextRequest) {
     try {
       const uidsRaw = await client.search({ since: sinceDate }, { uid: true })
       const uids = Array.isArray(uidsRaw) ? uidsRaw : []
-      const messages = await client.fetchAll(uids.slice(0, MAX_EMAILS_PER_RUN), {
+      // Fetch the most recent emails (highest UIDs = newest); older slice would miss recent bill forwards
+      const uidsToFetch = uids.length <= MAX_EMAILS_PER_RUN ? uids : uids.slice(-MAX_EMAILS_PER_RUN)
+      const messages = await client.fetchAll(uidsToFetch, {
         envelope: true,
         source: true,
       }, { uid: true })
