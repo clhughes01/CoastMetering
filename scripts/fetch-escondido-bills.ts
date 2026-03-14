@@ -611,23 +611,35 @@ async function scrapeBillsFromPortal(
           const injected = await injectRecaptchaToken(frame, token)
           if (injected) {
             injectedTokenThisAttempt = true
-            log("Injected 2Captcha token; clicking Sign In (so site's submit path runs)...")
-            await page.waitForTimeout(1500)
+            await page.waitForTimeout(1000)
             try {
-              const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
-              await btnByRole.click()
-              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-              submittedAfterCaptcha = true
-              log("Submitted after 2Captcha token.")
-            } catch {
-              try {
-                const submitInForm = passwordInput.locator("xpath=ancestor::form[1]").locator('input[type="submit"], button, a:has-text("Sign In")').first()
-                await submitInForm.click()
+              log("Submitting form with token (native form.submit so g-recaptcha-response is in POST)...")
+              const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+              if (formEl) {
+                await formEl.evaluate((form: HTMLFormElement) => form.submit())
                 await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
                 submittedAfterCaptcha = true
-                log("Submitted after 2Captcha token (fallback click).")
-              } catch (_) {
-                log("Sign In click did not navigate; will retry next attempt (do not click checkbox — it would clear the token).")
+                log("Submitted after 2Captcha token.")
+              }
+            } catch (_) {}
+            if (!submittedAfterCaptcha) {
+              try {
+                log("Form submit did not navigate; trying Sign In button click...")
+                const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
+                await btnByRole.click()
+                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+                submittedAfterCaptcha = true
+                log("Submitted after 2Captcha token (button click).")
+              } catch {
+                try {
+                  const submitInForm = passwordInput.locator("xpath=ancestor::form[1]").locator('input[type="submit"], button, a:has-text("Sign In")').first()
+                  await submitInForm.click()
+                  await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+                  submittedAfterCaptcha = true
+                  log("Submitted after 2Captcha token (fallback click).")
+                } catch (_) {
+                  log("Sign In did not navigate; will retry next attempt (do not click checkbox — it would clear the token).")
+                }
               }
             }
           } else {
