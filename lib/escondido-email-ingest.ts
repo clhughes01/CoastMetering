@@ -43,7 +43,18 @@ export function extractInvoiceLinks(html: string, text: string): string[] {
   return Array.from(new Set(links))
 }
 
-/** Parse invoice page HTML for account, amount, dates, PDF link */
+/** Resolve href to absolute URL */
+function resolveUrl(href: string, baseUrl: string): string {
+  const s = href.trim()
+  if (s.startsWith("http://") || s.startsWith("https://")) return s
+  try {
+    return new URL(s, baseUrl).href
+  } catch {
+    return s
+  }
+}
+
+/** Parse invoice page HTML for account number, amount, dates, and PDF link */
 export function parseInvoicePage(html: string, pageUrl: string): {
   accountNumber: string
   amountDue: number
@@ -68,8 +79,25 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   let periodStart = ""
   let periodEnd = ""
 
-  const accountMatch = html.match(/account\s*#?\s*[:\s]*(\d{4,})/i) || html.match(/#\s*(\d{4,})/i)
-  if (accountMatch) accountNumber = accountMatch[1]!.trim()
+  // Account number: try several label patterns, then bare #digits, then URL params
+  const accountPatterns = [
+    /account\s*#?\s*[:\s]*(\d{4,})/i,
+    /account\s*number\s*[:\s]*(\d{4,})/i,
+    /customer\s*account\s*[:\s#]*(\d{4,})/i,
+    /(?:account|acct)\s*no\.?\s*[:\s]*(\d{4,})/i,
+    /#\s*(\d{4,})/,
+  ]
+  for (const re of accountPatterns) {
+    const m = html.match(re)
+    if (m && m[1]) {
+      accountNumber = m[1].trim()
+      break
+    }
+  }
+  if (!accountNumber) {
+    const urlAccount = pageUrl.match(/account(?:number|id)?[=:](\d{4,})/i) || pageUrl.match(/[?&]id=(\d{4,})/)
+    if (urlAccount) accountNumber = urlAccount[1]!.trim()
+  }
 
   const amountMatch = html.match(/\$[\d,]+\.?\d*/)
   if (amountMatch) amountDue = parseFloat(amountMatch[0].replace(/[$,]/g, "")) || 0
@@ -83,11 +111,23 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   const dueLabelMatch = html.match(/due\s*date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
   if (dueLabelMatch) dueDate = normalizeDate(dueLabelMatch[1]!)
 
+  // PDF / download link: .pdf href, download/GetPdf/pdf.aspx, or link/button text "download" / "pdf" / "print"
   let pdfUrl: string | null = null
-  const pdfMatch = html.match(/<a\s+[^>]*href=["']([^"']*\.pdf[^"']*)["']/i)
-    || html.match(/href=["']([^"']*(?:download|pdf)[^"']*)["']/i)
-  if (pdfMatch) {
-    pdfUrl = pdfMatch[1]!.startsWith("http") ? pdfMatch[1]! : new URL(pdfMatch[1]!, pageUrl).href
+  const pdfPatterns = [
+    /<a\s+[^>]*href=["']([^"']*\.pdf[^"']*)["']/i,
+    /href=["']([^"']*(?:\.pdf|download\.aspx|pdf\.aspx|getpdf|viewpdf|downloadpdf)[^"']*)["']/i,
+    /href=["']([^"']*(?:download|pdf)[^"']*)["']/i,
+    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:[^<]*(?:download|print|pdf)[^<]*)<\/a>/i,
+  ]
+  for (const re of pdfPatterns) {
+    const m = html.match(re)
+    if (m && m[1]) {
+      const raw = m[1].trim()
+      if (raw && !raw.startsWith("javascript:")) {
+        pdfUrl = resolveUrl(raw, pageUrl)
+        break
+      }
+    }
   }
 
   return { accountNumber, amountDue, dueDate, periodStart, periodEnd, pdfUrl }
