@@ -12,8 +12,8 @@
  *
  * Optional (recommended in CI — use one of these):
  *
- *   A) API key only (Unlocker API): Create a Web Unlocker zone at brightdata.com → Scraping automation → Web Unlocker.
- *      Set ESCONDIDO_BRIGHTDATA_API_KEY and ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE (zone name from the Unlocker zone).
+ *   A) API key only (Unlocker API): Set ESCONDIDO_BRIGHTDATA_API_KEY (Bearer token from brightdata.com).
+ *      Zone defaults to web_unlocker1; override with ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE if your zone has another name.
  *      See https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website
  *
  *   B) Proxy (Residential etc.): Set ESCONDIDO_BRIGHTDATA_USERNAME and ESCONDIDO_BRIGHTDATA_PASSWORD from your Proxy zone.
@@ -114,14 +114,23 @@ async function unlockerRequest(
     },
     body: JSON.stringify(payload),
   })
-  const data = (await res.json()) as {
-    status_code?: number
-    body?: string
-    headers?: Record<string, string>
-    error?: string
+  const raw = await res.text()
+  let data: { status_code?: number; body?: string; headers?: Record<string, string>; error?: string }
+  const isJson = raw.trim().startsWith("{") || raw.trim().startsWith("[")
+  if (isJson) {
+    try {
+      data = JSON.parse(raw) as typeof data
+    } catch {
+      throw new Error(`Unlocker API ${res.status}: response not valid JSON. Check API key (Bearer) and zone (Web Unlocker zone name, e.g. web_unlocker1).`)
+    }
+  } else {
+    if (!res.ok) {
+      throw new Error(`Unlocker API ${res.status}: ${raw.slice(0, 400)}${raw.length > 400 ? "..." : ""}`)
+    }
+    throw new Error(`Unlocker API returned HTML instead of JSON. Check: 1) API key from brightdata.com/cp/setting/users 2) Zone is a Web Unlocker zone (Scraping automation → Web Unlocker), name exactly as in the zone (e.g. web_unlocker1).`)
   }
   if (!res.ok || data.error) {
-    throw new Error(data.error || `Unlocker API ${res.status}: ${await res.text()}`)
+    throw new Error(data.error || `Unlocker API ${res.status}: ${raw.slice(0, 300)}`)
   }
   return {
     status_code: data.status_code ?? res.status,
@@ -140,7 +149,7 @@ async function scrapeBillsWithUnlockerApi(
   loginEmail: string,
   loginPassword: string
 ): Promise<FetchedBill[]> {
-  log("Using Bright Data Unlocker API (API key + zone).")
+  log("Using Bright Data Unlocker API (API key).")
   const bills: FetchedBill[] = []
   try {
     log("Fetching portal...")
@@ -871,8 +880,8 @@ export async function runEscondidoBillFetch(options?: {
   const accountToProperty = await getPropertyAccountMapping(supabase)
 
   const unlockerApiKey = process.env.ESCONDIDO_BRIGHTDATA_API_KEY?.trim()
-  const unlockerZone = process.env.ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE?.trim()
-  if (unlockerApiKey && unlockerZone) {
+  const unlockerZone = process.env.ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE?.trim() || "web_unlocker1"
+  if (unlockerApiKey) {
     const bills = await scrapeBillsWithUnlockerApi(unlockerApiKey, unlockerZone, loginEmail, loginPassword)
     console.log(`Scraped ${bills.length} bill(s) from portal (Unlocker API). Property mapping has ${accountToProperty.size} account(s).`)
     const errors: string[] = []

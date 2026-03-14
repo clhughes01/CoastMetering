@@ -63,8 +63,8 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
-| ESCONDIDO_BRIGHTDATA_API_KEY | *(Optional)* Bright Data API key. Use with ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE for [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser). Create a **Web Unlocker** zone; zone name + API key are in the zone Overview. |
-| ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE | *(Optional)* Web Unlocker zone name (e.g. `web_unlocker1`). Use with ESCONDIDO_BRIGHTDATA_API_KEY. |
+| ESCONDIDO_BRIGHTDATA_API_KEY | *(Optional)* Bright Data API key (Bearer token). When set, the script uses the [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser). Get the key from Bright Data account settings; create a **Web Unlocker** zone (Scraping automation → Web Unlocker) if needed. |
+| ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE | *(Optional)* Web Unlocker zone name. Defaults to `web_unlocker1`; set only if your zone has a different name. |
 | ESCONDIDO_BRIGHTDATA_USERNAME | *(Optional)* Bright Data **proxy** username (Residential etc.). From Proxy dashboard → your zone → copy Username. Use with ESCONDIDO_BRIGHTDATA_PASSWORD to route the browser through Bright Data. |
 | ESCONDIDO_BRIGHTDATA_PASSWORD | *(Optional)* Bright Data zone password from the same Proxy zone (or the password you set when creating the zone). |
 | ESCONDIDO_BRIGHTDATA_PROXY_PORT | *(Optional)* Port if your zone uses something other than 33335 (check the zone’s “Proxy parameters” or integration snippet in the dashboard). |
@@ -394,7 +394,7 @@ Downstream you can:
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
 - **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
-  - **Option A — API key only:** Create a **Web Unlocker** zone at [Bright Data](https://brightdata.com/cp/zones) → Scraping automation → **Web Unlocker**. In the zone’s Overview you’ll see the **zone name** and **API key**. Set **ESCONDIDO_BRIGHTDATA_API_KEY** and **ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE**. The script will use the [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser, CAPTCHAs handled by Bright Data).
+  - **Option A — API key only:** Set **ESCONDIDO_BRIGHTDATA_API_KEY** to your Bright Data API key (Bearer token from account settings or from your Web Unlocker zone). The script uses the [Unlocker API](https://docs.brightdata.com/api-reference/rest-api/unlocker/unlock-website) (no browser, CAPTCHAs handled by Bright Data). Zone defaults to `web_unlocker1`; set **ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE** only if your zone has another name.
   - **Option B — Proxy:** Use a **Residential** (or other) proxy zone from the **Proxy** dashboard. Set **ESCONDIDO_BRIGHTDATA_USERNAME** and **ESCONDIDO_BRIGHTDATA_PASSWORD** so the browser uses Bright Data’s proxy.
   - **When running locally**, captcha often does not appear.
 
