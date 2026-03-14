@@ -1,9 +1,10 @@
-# Runs the Escondido Water bill fetcher on a schedule. Fully autonomous once secrets are set.
+# Escondido Water bill fetcher — for local use only.
+# The login page often shows reCAPTCHA; the script has no captcha automation.
+# Run locally: npm run fetch-escondido-bills (solve captcha manually if shown).
+# This workflow is kept for manual runs only; scheduled run disabled.
 name: Fetch Escondido bills
 on:
-  schedule:
-    - cron: '0 8 * * *'   # Daily at 8 AM UTC
-  workflow_dispatch:      # Allow manual "Run workflow" from Actions tab
+  workflow_dispatch:      # Manual run only (no schedule)
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -15,7 +16,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx playwright install chromium --with-deps
-      - name: Fetch Escondido bills (headed browser — required; headless is detected and blocks login)
+      - name: Fetch Escondido bills (local-only script; captcha may block in CI)
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm run fetch-escondido-bills
         env:
           PLAYWRIGHT_HEADED: "1"
@@ -23,10 +24,6 @@ jobs:
           ESCONDIDO_LOGIN_PASSWORD: ${{ secrets.ESCONDIDO_LOGIN_PASSWORD }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          ESCONDIDO_2CAPTCHA_API_KEY: ${{ secrets.ESCONDIDO_2CAPTCHA_API_KEY }}
-          ESCONDIDO_PROXY_SERVER: ${{ secrets.ESCONDIDO_PROXY_SERVER }}
-          ESCONDIDO_PROXY_USERNAME: ${{ secrets.ESCONDIDO_PROXY_USERNAME }}
-          ESCONDIDO_PROXY_PASSWORD: ${{ secrets.ESCONDIDO_PROXY_PASSWORD }}
       - name: Upload debug artifacts (when 0 bills or trace from CI)
         if: always()
         continue-on-error: true

@@ -1,6 +1,6 @@
-# Autonomous Escondido Water Bill Fetch
+# Escondido Water Bill Fetch (local use)
 
-This doc describes how to automatically pull current bills from the City of Escondido’s water bill portal (Invoice Cloud) so new bills are added to the database without manual uploads.
+This doc describes how to pull current bills from the City of Escondido’s water bill portal (Invoice Cloud) and add them to the database. **The script is for local use only** — it does not automate reCAPTCHA; if the login page shows a captcha, solve it manually in the browser.
 
 ---
 
@@ -63,24 +63,17 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
-| ESCONDIDO_2CAPTCHA_API_KEY | *(Optional but recommended in CI)* [2Captcha](https://2captcha.com) API key from [Dashboard](https://2captcha.com/enterpage). When set, reCAPTCHA on the login page is solved via 2Captcha (createTask → getTaskResult) and the token is injected before submit. See [Quick start](https://2captcha.com/api-docs/quick-start), [reCAPTCHA v2](https://2captcha.com/api-docs/recaptcha-v2), [reCAPTCHA v2 Enterprise](https://2captcha.com/api-docs/recaptcha-v2-enterprise). |
-| ESCONDIDO_PROXY_SERVER | *(Optional)* Generic proxy URL for Playwright (e.g. `http://proxy:port`). |
-| ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD | *(Optional)* Proxy auth if not embedded in ESCONDIDO_PROXY_SERVER. |
+### Step 4: Run the script locally
 
-### Step 4: Push and run the workflow once
+The script is intended for **local use only** (no captcha automation). Run it on your machine:
 
-1. Commit and push the branch that has `.github/workflows/fetch-escondido-bills.yml` and the scripts.
-2. GitHub → **Actions** → **Fetch Escondido bills** → **Run workflow** → **Run workflow**.
-3. Open the run and check logs for **`Inserted N bill(s).`** (or fix any errors).
-4. In Supabase **Table Editor** → **utility_provider_bills**, confirm new rows if the portal had bills.
+1. `npm install` then `npx playwright install chromium`
+2. Set env (or use `.env`): `ESCONDIDO_LOGIN_EMAIL`, `ESCONDIDO_LOGIN_PASSWORD`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+3. Run: `npm run fetch-escondido-bills`
+4. If the login page shows reCAPTCHA, **solve it manually** in the browser; the script waits up to 90 seconds for the dashboard.
+5. In Supabase **Table Editor** → **utility_provider_bills**, confirm new rows.
 
-### Step 5: Done
-
-The workflow runs **daily at 8:00 AM UTC**. New bills are added to **utility_provider_bills** automatically. To change the schedule, edit `.github/workflows/fetch-escondido-bills.yml` → `schedule`.
-
-**Adding properties in the UI:** When an admin or property manager **creates** or **edits** a property in the app, they can enter **Water Account # (Escondido)**. That value is saved to `property_utility_accounts`, so the next scheduled bill fetch will associate that account’s bills with the property. No extra CSV or SQL needed for new properties.
-
-**Optional – test locally:** `npm install` then `npx playwright install chromium`, set the four env vars, then `npm run fetch-escondido-bills`.
+**Adding properties in the UI:** When an admin or property manager **creates** or **edits** a property in the app, they can enter **Water Account # (Escondido)**. That value is saved to `property_utility_accounts`, so the next run will associate that account’s bills with the property.
 
 ---
 
@@ -181,10 +174,9 @@ The workflow file **`.github/workflows/fetch-escondido-bills.yml`** is already i
 
 ---
 
-### Step 5: Confirm it’s autonomous
+### Step 5: Run locally when needed
 
-- The workflow is scheduled to run **daily at 8:00 AM UTC** (see `cron: '0 8 * * *'` in the workflow).
-- You can change the schedule by editing `.github/workflows/fetch-escondido-bills.yml` and the `schedule` section.
+- The script has no captcha automation; run it **locally** and solve any reCAPTCHA manually. The workflow is manual-only (no schedule).
 - After each run, new bills (when present on the portal) appear in **`utility_provider_bills`** in Supabase. No manual steps needed.
 
 **Optional:** Run the script locally once to double-check login and scraping (before or after setting up Actions):
@@ -198,14 +190,9 @@ npm run fetch-escondido-bills
 
 ---
 
-## Fully autonomous (no manual runs)
+## Local use only
 
-**Yes, this can be fully autonomous.** Once you complete the one-time setup below, the system will fetch new bills on a schedule with **no manual input**. No one needs to run the script or touch anything.
-
-- **One-time setup**: Run the DB migration, add property→account mapping, add env vars/secrets, and enable one of the scheduling options (e.g. GitHub Actions).
-- **After that**: The script runs automatically (e.g. daily). New bills appear in `utility_provider_bills` without any action from you.
-
-**Easiest path**: Use **GitHub Actions** (Option A below). Add the workflow file, set the four secrets in your repo, and push. GitHub will run the fetcher every day at 8 AM UTC (or whatever schedule you set). You never run the script by hand.
+The script does not automate reCAPTCHA. **Run it locally** when you want to fetch bills. If the login page shows a captcha, solve it manually in the browser; the script waits up to 90 seconds for the dashboard. The GitHub Actions workflow is manual-only (no schedule); in CI the login page often shows captcha and will block.
 
 ---
 
@@ -213,7 +200,7 @@ npm run fetch-escondido-bills
 
 - **Portal**: [invoicecloud.com/escondidoca](https://www.invoicecloud.com/escondidoca) (login with email + password).
 - **Flow**: A script logs in, scrapes the bill list, and upserts rows into `utility_provider_bills` (and uses `property_utility_accounts` to map accounts to properties).
-- **Scheduling**: Playwright does not run inside Vercel serverless. You run the script on a cron worker (GitHub Actions, Railway, cron job, etc.) or call a webhook that runs the script.
+- **Running**: Run the script locally (`npm run fetch-escondido-bills`). Playwright does not run inside Vercel serverless.
 
 ## 1. Database setup
 
@@ -293,18 +280,14 @@ To have bills update **without any manual runs**, you must set up one of these. 
 
 Playwright cannot run inside Vercel. Use one of these:
 
-### Option A: GitHub Actions (recommended for zero-touch)
+### Option A: GitHub Actions (manual run only)
 
-Add the workflow file below. Once you set the repo secrets, **nothing else is required** — GitHub runs the job on a schedule and when you trigger it manually if needed.
-
-Add the workflow file below. A copy is included in the repo at `.github/workflows/fetch-escondido-bills.yml` — if you use it, you only need to add the secrets.
+The workflow at `.github/workflows/fetch-escondido-bills.yml` has **no schedule** (login captcha often blocks in CI). You can trigger it manually from the Actions tab; if the run hits captcha it will not complete. Prefer running the script locally.
 
 ```yaml
 name: Fetch Escondido bills
 on:
-  schedule:
-    - cron: '0 8 * * *'   # daily 8 AM UTC
-  workflow_dispatch:
+  workflow_dispatch:   # manual only
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -389,9 +372,8 @@ Downstream you can:
 - **Cron returns “Run the script”**  
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
-- **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
-  - Set **ESCONDIDO_2CAPTCHA_API_KEY** to your [2Captcha](https://2captcha.com) API key (from [Dashboard](https://2captcha.com/enterpage)). The script will submit the captcha to 2Captcha, wait for the solution, inject the token, and submit the form. Ensure your 2Captcha account has balance. See [2Captcha Quick start](https://2captcha.com/api-docs/quick-start) and [reCAPTCHA v2](https://2captcha.com/api-docs/recaptcha-v2) (or [v2 Enterprise](https://2captcha.com/api-docs/recaptcha-v2-enterprise) if the site uses Enterprise).
-  - **When running locally**, captcha often does not appear; in CI, 2Captcha is typically required.
+- **Login page shows reCAPTCHA**  
+  - The script does not automate captcha. Run it **locally** with the browser visible (`ESCONDIDO_WATCH=1 npm run fetch-escondido-bills`). When the captcha appears, solve it manually in the browser; the script waits up to 90 seconds for the dashboard.
 
 - **Playwright errors on Vercel**  
   - Do not run the Playwright script inside Vercel. Run it in a separate environment (GitHub Actions, Railway, server, etc.) as above.

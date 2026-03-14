@@ -3,20 +3,17 @@
  * Logs into https://www.invoicecloud.com/escondidoca, scrapes the bill list,
  * and inserts new bills into utility_provider_bills.
  *
+ * For local use only. No captcha automation — if the login page shows reCAPTCHA,
+ * solve it manually in the browser; the script waits for the dashboard.
+ *
  * Run: npx tsx scripts/fetch-escondido-bills.ts
- * Watch locally: ESCONDIDO_WATCH=1 npm run fetch-escondido-bills
+ * Watch: ESCONDIDO_WATCH=1 npm run fetch-escondido-bills
  *
  * Required env (or in .env):
  *   ESCONDIDO_LOGIN_EMAIL, ESCONDIDO_LOGIN_PASSWORD
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
- * Optional (recommended in CI for reCAPTCHA):
- *   ESCONDIDO_2CAPTCHA_API_KEY — 2Captcha API key from https://2captcha.com/enterpage.
- *   When set, reCAPTCHA on the login page is solved via 2Captcha (createTask → getTaskResult)
- *   and the token is injected before submit. See https://2captcha.com/api-docs/quick-start
- *   and https://2captcha.com/api-docs/recaptcha-v2 (and recaptcha-v2-enterprise if needed).
- *
- * Optional (generic proxy for Playwright): ESCONDIDO_PROXY_SERVER, ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD
+ * Optional: ESCONDIDO_PROXY_SERVER, ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD
  */
 import "dotenv/config"
 
@@ -82,431 +79,6 @@ function normalizeDate(s: string): string {
 
 const log = (msg: string) => console.log(`[Escondido] ${msg}`)
 
-const TWOCAPTCHA_CREATE = "https://api.2captcha.com/createTask"
-const TWOCAPTCHA_RESULT = "https://api.2captcha.com/getTaskResult"
-
-/** Get reCAPTCHA v2 params only (div with data-sitekey, no data-action). */
-async function getRecaptchaV2Params(
-  frame: import("playwright").Frame
-): Promise<{ siteKey: string } | null> {
-  return frame.evaluate(() => {
-    const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
-    if (!withKey) return null
-    const key = withKey.getAttribute("data-sitekey")
-    const action = withKey.getAttribute("data-action")
-    if (key && !action) return { siteKey: key }
-    return null
-  })
-}
-
-type RecaptchaV2Params = {
-  siteKey: string
-  apiDomain?: "recaptcha.net" | "google.com"
-  isEnterprise?: boolean
-}
-
-/**
- * Lenient v2 site key + apiDomain for when checkbox challenge is shown.
- * Prefers the visible widget key (iframe with size=normal) when the page has both invisible and checkbox.
- * Detects Enterprise (recaptcha/enterprise) so we can use 2Captcha Enterprise API.
- */
-async function getRecaptchaV2ParamsLenient(
-  frame: import("playwright").Frame
-): Promise<RecaptchaV2Params | null> {
-  const result = await frame.evaluate((): RecaptchaV2Params | null => {
-    let siteKey: string | null = null
-    let useRecaptchaNet = false
-    let enterprise = false
-    // Prefer key from visible checkbox iframe (size=normal); Invoice Cloud loads both invisible + normal
-    for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
-      const src = iframe.getAttribute("src") || ""
-      if (src.includes("recaptcha.net")) useRecaptchaNet = true
-      if (src.includes("enterprise")) enterprise = true
-      if (src.includes("size=normal")) {
-        const k = src.match(/[\?&]k=([^&]+)/)
-        if (k) return { siteKey: k[1]!, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com", isEnterprise: enterprise }
-      }
-    }
-    const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
-    if (withKey) {
-      siteKey = withKey.getAttribute("data-sitekey")
-      for (const s of Array.from(document.scripts)) {
-        if ((s.getAttribute("src") || "").includes("enterprise")) enterprise = true
-      }
-      if (siteKey) return { siteKey, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com", isEnterprise: enterprise }
-    }
-    for (const iframe of Array.from(document.querySelectorAll("iframe[src*='recaptcha']"))) {
-      const src = iframe.getAttribute("src") || ""
-      if (src.includes("recaptcha.net")) useRecaptchaNet = true
-      if (src.includes("enterprise")) enterprise = true
-      const k = src.match(/[\?&]k=([^&]+)/)
-      if (k) {
-        siteKey = k[1]!
-        break
-      }
-    }
-    if (!siteKey) {
-      for (const s of Array.from(document.scripts)) {
-        const src = s.getAttribute("src") || ""
-        if (!/recaptcha|google\.com|recaptcha\.net/i.test(src)) continue
-        if (src.includes("recaptcha.net")) useRecaptchaNet = true
-        if (src.includes("enterprise")) enterprise = true
-        const k = src.match(/[\?&]k=([^&]+)/)
-        if (k) {
-          siteKey = k[1]!
-          break
-        }
-        const render = src.match(/[\?&]render=([^&]+)/)
-        if (render) {
-          siteKey = render[1]!
-          break
-        }
-      }
-    }
-    if (!siteKey) {
-      const html = document.documentElement.outerHTML
-      const longKey = html.match(/['"]?(6L[\w\-]{20,})['"]?/)
-      if (longKey) siteKey = longKey[1]!
-    }
-    if (!siteKey) return null
-    return { siteKey, apiDomain: useRecaptchaNet ? "recaptcha.net" : "google.com", isEnterprise: enterprise }
-  })
-  return result
-}
-
-/** Get reCAPTCHA v3 params only (script render= or div with data-action). */
-async function getRecaptchaV3Params(
-  frame: import("playwright").Frame
-): Promise<{ siteKey: string; action?: string } | null> {
-  return frame.evaluate(() => {
-    const withKey = document.querySelector("[data-sitekey]") as HTMLElement | null
-    if (withKey) {
-      const key = withKey.getAttribute("data-sitekey")
-      const action = withKey.getAttribute("data-action") ?? undefined
-      if (key && action) return { siteKey: key, action }
-    }
-    for (const s of Array.from(document.scripts)) {
-      const src = s.getAttribute("src") || ""
-      const render = src.match(/[\?&]render=([^&]+)/)
-      if (render) return { siteKey: render[1]!, action: undefined }
-    }
-    return null
-  })
-}
-
-/** Get first available recaptcha params (v2 preferred) for retry/checkbox path. */
-async function getRecaptchaParams(
-  frame: import("playwright").Frame
-): Promise<{ siteKey: string; action?: string; version: "v2" | "v3" } | null> {
-  const v2 = await getRecaptchaV2Params(frame)
-  if (v2) return { ...v2, version: "v2" }
-  const v3 = await getRecaptchaV3Params(frame)
-  if (v3) return { ...v3, version: "v3" }
-  return null
-}
-
-/**
- * Solve reCAPTCHA v2 (checkbox + image challenge) using 2Captcha API v2.
- * Workflow: createTask → wait 15s (per 2Captcha limits for reCAPTCHA) → getTaskResult every 5s until ready.
- * @see https://2captcha.com/api-docs/recaptcha-v2
- * @see https://2captcha.com/api-docs/limits (wait 10-20s for recaptcha before first getTaskResult)
- */
-async function solveRecaptchaV2With2Captcha(
-  apiKey: string,
-  pageUrl: string,
-  siteKey: string,
-  isInvisible = false,
-  userAgent?: string,
-  apiDomain?: "google.com" | "recaptcha.net"
-): Promise<string | null> {
-  const task: Record<string, unknown> = {
-    type: "RecaptchaV2TaskProxyless",
-    websiteURL: pageUrl,
-    websiteKey: siteKey,
-    isInvisible: !!isInvisible,
-  }
-  if (userAgent) task.userAgent = userAgent
-  if (apiDomain) task.apiDomain = apiDomain
-  const createRes = await fetch(TWOCAPTCHA_CREATE, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientKey: apiKey, task }),
-  })
-  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorCode?: string; errorDescription?: string }
-  if (createJson.errorId !== 0 || createJson.taskId == null) {
-    log(`2Captcha createTask failed: errorId=${createJson.errorId} ${createJson.errorCode ?? ""} ${createJson.errorDescription ?? ""}`)
-    if (createJson.errorId === 1) log("Check ESCONDIDO_2CAPTCHA_API_KEY (copy from https://2captcha.com/enterpage, no spaces/newlines).")
-    if (createJson.errorId === 10) log("2Captcha balance is zero; add funds at https://2captcha.com/enterpage.")
-    if (createJson.errorId === 5) log("websiteURL missing or invalid; ensure page URL is passed to solver.")
-    if (createJson.errorId === 31) log("Invalid reCAPTCHA sitekey; check the page uses a valid data-sitekey.")
-    return null
-  }
-  const taskId = createJson.taskId
-  // Per 2Captcha limits: wait 10-20s for reCAPTCHA before first getTaskResult (avg solve ~30s)
-  const INITIAL_WAIT_MS = 20000
-  await new Promise((r) => setTimeout(r, INITIAL_WAIT_MS))
-  const maxPolls = 60
-  for (let i = 0; i < maxPolls; i++) {
-    const resultRes = await fetch(TWOCAPTCHA_RESULT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientKey: apiKey, taskId }),
-    })
-    const resultJson = (await resultRes.json()) as {
-      errorId?: number
-      status?: string
-      solution?: { gRecaptchaResponse?: string; token?: string }
-      errorCode?: string
-      errorDescription?: string
-    }
-    if (resultJson.status === "ready" && resultJson.solution) {
-      const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
-      if (token) {
-        log(`2Captcha v2 solved (poll ${i + 1}).`)
-        return token
-      }
-    }
-    if (resultJson.errorId !== 0) {
-      log(`2Captcha getTaskResult error: errorId=${resultJson.errorId} ${resultJson.errorCode ?? ""} ${resultJson.errorDescription ?? ""}`)
-      if (resultJson.errorId === 12) log("Captcha unsolvable (no charge). Next attempt will request a fresh solve.")
-      return null
-    }
-    if (resultJson.status === "processing") {
-      await new Promise((r) => setTimeout(r, 5000))
-      continue
-    }
-    await new Promise((r) => setTimeout(r, 5000))
-  }
-  log("2Captcha v2 timed out waiting for solution.")
-  return null
-}
-
-/**
- * Solve reCAPTCHA v2 Enterprise using 2Captcha API.
- * Same timing as v2: 15s after createTask, then getTaskResult every 5s.
- * @see https://2captcha.com/api-docs/recaptcha-v2-enterprise
- */
-async function solveRecaptchaV2EnterpriseWith2Captcha(
-  apiKey: string,
-  pageUrl: string,
-  siteKey: string,
-  isInvisible = false,
-  userAgent?: string,
-  apiDomain?: "google.com" | "recaptcha.net"
-): Promise<string | null> {
-  const task: Record<string, unknown> = {
-    type: "RecaptchaV2EnterpriseTaskProxyless",
-    websiteURL: pageUrl,
-    websiteKey: siteKey,
-    isInvisible: !!isInvisible,
-  }
-  if (userAgent) task.userAgent = userAgent
-  if (apiDomain) task.apiDomain = apiDomain
-  const createRes = await fetch(TWOCAPTCHA_CREATE, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientKey: apiKey, task }),
-  })
-  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorCode?: string; errorDescription?: string }
-  if (createJson.errorId !== 0 || createJson.taskId == null) {
-    log(`2Captcha Enterprise createTask failed: errorId=${createJson.errorId} ${createJson.errorCode ?? ""} ${createJson.errorDescription ?? ""}`)
-    return null
-  }
-  const taskId = createJson.taskId
-  await new Promise((r) => setTimeout(r, 20000))
-  const maxPolls = 60
-  for (let i = 0; i < maxPolls; i++) {
-    const resultRes = await fetch(TWOCAPTCHA_RESULT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientKey: apiKey, taskId }),
-    })
-    const resultJson = (await resultRes.json()) as {
-      errorId?: number
-      status?: string
-      solution?: { gRecaptchaResponse?: string; token?: string }
-      errorCode?: string
-      errorDescription?: string
-    }
-    if (resultJson.status === "ready" && resultJson.solution) {
-      const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
-      if (token) {
-        log(`2Captcha Enterprise solved (poll ${i + 1}).`)
-        return token
-      }
-    }
-    if (resultJson.errorId !== 0) {
-      log(`2Captcha Enterprise getTaskResult error: errorId=${resultJson.errorId} ${resultJson.errorDescription ?? ""}`)
-      return null
-    }
-    if (resultJson.status === "processing") {
-      await new Promise((r) => setTimeout(r, 5000))
-      continue
-    }
-    await new Promise((r) => setTimeout(r, 5000))
-  }
-  log("2Captcha Enterprise timed out waiting for solution.")
-  return null
-}
-
-/**
- * Solve reCAPTCHA v3 using 2Captcha API. Same 15s initial wait, 5s poll interval.
- */
-async function solveRecaptchaV3With2Captcha(
-  apiKey: string,
-  pageUrl: string,
-  siteKey: string,
-  pageAction?: string
-): Promise<string | null> {
-  const createRes = await fetch(TWOCAPTCHA_CREATE, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      clientKey: apiKey,
-      task: {
-        type: "RecaptchaV3TaskProxyless",
-        websiteURL: pageUrl,
-        websiteKey: siteKey,
-        minScore: 0.9,
-        pageAction: pageAction || "submit",
-      },
-    }),
-  })
-  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number }
-  if (createJson.errorId !== 0 || createJson.taskId == null) return null
-  const taskId = createJson.taskId
-  await new Promise((r) => setTimeout(r, 20000))
-  for (let i = 0; i < 40; i++) {
-    const resultRes = await fetch(TWOCAPTCHA_RESULT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientKey: apiKey, taskId }),
-    })
-    const resultJson = (await resultRes.json()) as {
-      errorId?: number
-      status?: string
-      solution?: { gRecaptchaResponse?: string; token?: string }
-    }
-    if (resultJson.status === "ready" && resultJson.solution) {
-      const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
-      if (token) return token
-    }
-    if (resultJson.errorId !== 0) return null
-    await new Promise((r) => setTimeout(r, 5000))
-  }
-  return null
-}
-
-/**
- * Try to click the reCAPTCHA checkbox inside its iframe (no 2Captcha).
- * Returns true if we found and clicked it, false otherwise.
- * Note: Google may then show an image challenge; if so, we still need 2Captcha.
- */
-async function tryClickRecaptchaCheckbox(
-  page: import("playwright").Page
-): Promise<boolean> {
-  await page.waitForTimeout(1500)
-  const frames = page.frames()
-  for (const f of frames) {
-    const url = f.url()
-    if (!/recaptcha|google\.com|recaptcha\.net/i.test(url)) continue
-    if (!/anchor|checkbox/i.test(url)) continue
-    try {
-      const anchor = f.locator("#recaptcha-anchor, [role='checkbox'], .recaptcha-checkbox-border").first()
-      await anchor.waitFor({ state: "visible", timeout: 3000 })
-      await anchor.click()
-      log("Clicked reCAPTCHA checkbox in iframe.")
-      return true
-    } catch {
-      continue
-    }
-  }
-  log("Could not find or click reCAPTCHA checkbox iframe.")
-  return false
-}
-
-/**
- * Inject 2Captcha token into the g-recaptcha-response for the VISIBLE widget (login form).
- * When the page has both invisible and checkbox widgets, we must fill the one inside the login form.
- * Per https://2captcha.com/api-docs/recaptcha-v2 — token goes in g-recaptcha-response or callback.
- */
-async function injectRecaptchaToken(
-  frame: import("playwright").Frame,
-  token: string
-): Promise<boolean> {
-  const found = await frame.evaluate((tokenValue) => {
-    const form = document.querySelector("form")
-    if (!form) return false
-    const inForm =
-      form.querySelector<HTMLTextAreaElement>("#g-recaptcha-response")
-      || form.querySelector<HTMLTextAreaElement>("textarea[name='g-recaptcha-response']")
-      || form.querySelector<HTMLTextAreaElement>("textarea[id^='g-recaptcha-response']")
-    const el = inForm
-      || (document.getElementById("g-recaptcha-response") as HTMLTextAreaElement | null)
-      || document.querySelector<HTMLTextAreaElement>("textarea[name='g-recaptcha-response']")
-    if (!el) return false
-    el.value = tokenValue
-    el.dispatchEvent(new Event("input", { bubbles: true }))
-    el.dispatchEvent(new Event("change", { bubbles: true }))
-
-    const recaptchaDiv = form.querySelector("[data-sitekey]") as HTMLElement | null
-      || document.querySelector("[data-sitekey]") as HTMLElement | null
-    const callbackName = recaptchaDiv?.getAttribute("data-callback")
-    if (callbackName) {
-      const fn = (window as unknown as Record<string, (t?: string) => void>)[callbackName]
-      if (typeof fn === "function") {
-        try {
-          fn(tokenValue)
-        } catch (_) {}
-      }
-    }
-    const w = window as unknown as { ___grecaptcha_cfg?: { callback?: (t?: string) => void } }
-    if (typeof w.___grecaptcha_cfg?.callback === "function") {
-      try {
-        w.___grecaptcha_cfg.callback(tokenValue)
-      } catch {
-        w.___grecaptcha_cfg.callback()
-      }
-    }
-    return true
-  }, token)
-  return found === true
-}
-
-/**
- * After injecting a token, verify what the page "sees" — textarea value and getResponse().
- * If getResponse() is empty, the site's Sign In handler likely won't see the token when clicked.
- */
-async function verifyCaptchaAfterInjection(frame: import("playwright").Frame): Promise<{
-  textareaLength: number
-  getResponseLength: number
-  getResponseMatches: boolean
-}> {
-  const result = await frame.evaluate(() => {
-    const textareas = document.querySelectorAll<HTMLTextAreaElement>("textarea[id^='g-recaptcha-response'], textarea[name='g-recaptcha-response']")
-    let textareaLength = 0
-    for (const el of textareas) {
-      if (el.value && el.value.length > textareaLength) textareaLength = el.value.length
-    }
-    let getResponseLength = 0
-    let getResponseMatches = false
-    try {
-      const g = (window as unknown as { grecaptcha?: { enterprise?: { getResponse: (id?: number) => string }; getResponse: (id?: number) => string } }).grecaptcha
-      if (g?.enterprise?.getResponse) {
-        const r = g.enterprise.getResponse()
-        getResponseLength = r ? r.length : 0
-        getResponseMatches = r !== ""
-      } else if (g?.getResponse) {
-        const r = g.getResponse()
-        getResponseLength = r ? r.length : 0
-        getResponseMatches = r !== ""
-      }
-    } catch (_) {}
-    return { textareaLength, getResponseLength, getResponseMatches }
-  })
-  return result
-}
-
 /**
  * Get the frame that contains the Invoice Cloud portal (main frame after redirect or iframe).
  */
@@ -545,15 +117,12 @@ async function getPortalFrame(page: import("playwright").Page): Promise<import("
 
 /**
  * Scrape bills from the Invoice Cloud portal.
- * Real flow (from UI): Landing → Sign In link → Login form → Dashboard → "Pay My Invoices" → Open Invoices table.
- * When reCAPTCHA appears, uses 2Captcha (if ESCONDIDO_2CAPTCHA_API_KEY set) to get token, inject, and submit.
+ * For local use only. No captcha automation — if reCAPTCHA appears, solve it manually; script waits.
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
   loginEmail: string,
-  loginPassword: string,
-  twoCaptchaApiKey: string | undefined,
-  userAgent: string
+  loginPassword: string
 ): Promise<FetchedBill[]> {
   log("Loading portal...")
   await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 60000 })
@@ -563,7 +132,6 @@ async function scrapeBillsFromPortal(
   const frame = await getPortalFrame(page)
   const loc = (sel: string) => frame.locator(sel)
 
-  // 1) Click "Sign In" link (top right) to open login form
   log("Looking for Sign In link...")
   const signInLink = loc('a:has-text("Sign In")').first()
   try {
@@ -575,141 +143,31 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Login with retries: fill form → Sign In → if captcha, use 2Captcha (or checkbox fallback) → inject token and submit
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
   await emailInput.waitFor({ state: "visible", timeout: 15000 })
-  const MAX_LOGIN_ATTEMPTS = 2
-  for (let attempt = 1; attempt <= MAX_LOGIN_ATTEMPTS; attempt++) {
-    log(`Login attempt ${attempt}/${MAX_LOGIN_ATTEMPTS}...`)
-    await emailInput.fill(loginEmail)
-    await passwordInput.fill(loginPassword)
-    await page.waitForTimeout(1500)
-    log("Clicking Sign In...")
-    try {
-      const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
-      await btnByRole.waitFor({ state: "visible", timeout: 8000 })
-      await btnByRole.click()
-    } catch {
-      try {
-        const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
-        const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
-        await submitInForm.waitFor({ state: "visible", timeout: 8000 })
-        await submitInForm.click({ force: true })
-      } catch {
-        const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-        if (formEl) await formEl.evaluate((form: HTMLFormElement) => form.submit())
-      }
-    }
-    await page.waitForTimeout(4000)
-    if (!page.url().includes("customerlogin")) {
-      log("Reached dashboard.")
-      break
-    }
-    const bodyText = await frame.locator("body").innerText().catch(() => "")
-    const needsCheckbox = /checkbox\s*challenge|complete\s*the\s*checkbox|recaptcha/i.test(bodyText)
-    if (!needsCheckbox) {
-      await page.waitForTimeout(3000)
-      if (!page.url().includes("customerlogin")) break
-    }
-    log("Captcha shown; solving with 2Captcha or checkbox fallback...")
-    await passwordInput.fill(loginPassword)
-    await page.waitForTimeout(1000)
-
-    let submittedAfterCaptcha = false
-    let injectedTokenThisAttempt = false
-    if (twoCaptchaApiKey) {
-      const params = await getRecaptchaV2ParamsLenient(frame)
-      if (params?.siteKey) {
-        const pageUrl = page.url()
-        log(`2Captcha: submitting task for ${params.isEnterprise ? "Enterprise" : "v2"} siteKey=${params.siteKey.slice(0, 12)}...`)
-        const token = params.isEnterprise
-          ? await solveRecaptchaV2EnterpriseWith2Captcha(
-              twoCaptchaApiKey,
-              pageUrl,
-              params.siteKey,
-              false,
-              userAgent,
-              params.apiDomain
-            )
-          : await solveRecaptchaV2With2Captcha(
-              twoCaptchaApiKey,
-              pageUrl,
-              params.siteKey,
-              false,
-              userAgent,
-              params.apiDomain
-            )
-        if (token) {
-          log(`2Captcha token received (length ${token.length}); injecting...`)
-          const injected = await injectRecaptchaToken(frame, token)
-          if (injected) {
-            const verification = await verifyCaptchaAfterInjection(frame)
-            log(`After injection: g-recaptcha-response textarea length=${verification.textareaLength}, grecaptcha.getResponse() length=${verification.getResponseLength}${verification.getResponseMatches ? " (page sees token)" : " (page does NOT see token — Sign In may fail)"}`)
-            injectedTokenThisAttempt = true
-            await page.waitForTimeout(1000)
-            try {
-              log("Clicking Sign In (token injected)...")
-              const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
-              await btnByRole.click()
-              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-              submittedAfterCaptcha = true
-              log("Submitted after 2Captcha token.")
-            } catch {
-              try {
-                log("Sign In button failed; trying submit input/button in form...")
-                const submitInForm = passwordInput.locator("xpath=ancestor::form[1]").locator('input[type="submit"], button, a:has-text("Sign In")').first()
-                await submitInForm.click()
-                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-                submittedAfterCaptcha = true
-                log("Submitted after 2Captcha token (fallback click).")
-              } catch (_) {
-                try {
-                  log("Click did not navigate; trying native form.submit()...")
-                  const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-                  if (formEl) {
-                    await formEl.evaluate((form: HTMLFormElement) => form.submit())
-                    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-                    submittedAfterCaptcha = true
-                    log("Submitted after 2Captcha token (form.submit).")
-                  }
-                } catch (_) {}
-                if (!submittedAfterCaptcha) {
-                  log("Sign In did not navigate; will retry next attempt (do not click checkbox — it would clear the token).")
-                }
-              }
-            }
-          } else {
-            log("Could not inject 2Captcha token into page.")
-          }
-        }
-      } else {
-        log("Could not get reCAPTCHA siteKey from page.")
-      }
-    }
-    if (!submittedAfterCaptcha && !injectedTokenThisAttempt) {
-      const clicked = await tryClickRecaptchaCheckbox(page)
-      if (clicked) {
-        await page.waitForTimeout(4000)
-        try {
-          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-          if (formEl) {
-            await formEl.evaluate((form: HTMLFormElement) => form.submit())
-            await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
-            log("Submitted after checkbox.")
-            submittedAfterCaptcha = true
-          }
-        } catch (_) {}
-      }
-    }
-    if (submittedAfterCaptcha) break
-    await page.waitForTimeout(2000)
-  }
-
-  log("Waiting for dashboard (leaving customerlogin)...")
+  await emailInput.fill(loginEmail)
+  await passwordInput.fill(loginPassword)
+  await page.waitForTimeout(1000)
+  log("Clicking Sign In (if captcha appears, solve it manually in the browser)...")
   try {
-    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 35000 })
+    const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
+    await btnByRole.waitFor({ state: "visible", timeout: 8000 })
+    await btnByRole.click()
+  } catch {
+    try {
+      const formContainingPassword = passwordInput.locator("xpath=ancestor::form[1]")
+      const submitInForm = formContainingPassword.locator('input[type="submit"], input[type="image"], button, a:has-text("Sign In")').first()
+      await submitInForm.waitFor({ state: "visible", timeout: 8000 })
+      await submitInForm.click({ force: true })
+    } catch {
+      const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+      if (formEl) await formEl.evaluate((form: HTMLFormElement) => form.submit())
+    }
+  }
+  try {
+    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 90000 })
     log(`Navigated to: ${page.url()}`)
   } catch {
     log(`Still on: ${page.url()}`)
@@ -849,7 +307,6 @@ export async function runEscondidoBillFetch(options?: {
 
   const supabase = getSupabase()
   const accountToProperty = await getPropertyAccountMapping(supabase)
-  const twoCaptchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY?.trim()
 
   let browser: Awaited<ReturnType<typeof chromium.launch>> | Awaited<ReturnType<typeof chromium.connect>>
   if (options?.browserWSEndpoint) {
@@ -870,8 +327,8 @@ export async function runEscondidoBillFetch(options?: {
       proxyConfig = { server: proxyServer, ...proxyAuth }
       log(`Using proxy: ${proxyServer.replace(/:[^:@]+@/, ":****@")}`)
     }
-    const useChrome = process.env.ESCONDIDO_USE_CHROME === "1"
-    const launchOpts: Parameters<typeof chromium.launch>[0] = {
+    log("Launching Chromium (Playwright)")
+    browser = await chromium.launch({
       headless: watch ? false : headless,
       slowMo: watch ? 800 : 0,
       proxy: proxyConfig,
@@ -882,24 +339,7 @@ export async function runEscondidoBillFetch(options?: {
         "--disable-blink-features=AutomationControlled",
         "--window-size=1280,720",
       ],
-    }
-    if (useChrome) {
-      launchOpts.channel = "chrome"
-      log("Launching Google Chrome (system) — set ESCONDIDO_USE_CHROME=1")
-    } else {
-      log("Launching Chromium (Playwright)")
-    }
-    try {
-      browser = await chromium.launch(launchOpts)
-    } catch (e) {
-      if (useChrome) {
-        log("Chrome not found, falling back to Playwright Chromium")
-        delete launchOpts.channel
-        browser = await chromium.launch(launchOpts)
-      } else {
-        throw e
-      }
-    }
+    })
     if (watch) log("Watch mode: browser visible, actions slowed so you can see each step.")
   }
 
@@ -922,7 +362,7 @@ export async function runEscondidoBillFetch(options?: {
       log("Tracing enabled (CI): trace.zip will be saved for Playwright Trace Viewer.")
     }
     const page = await context.newPage()
-    const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword, twoCaptchaApiKey, userAgent)
+    const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword)
 
     console.log(`Scraped ${bills.length} bill(s) from portal. Property mapping has ${accountToProperty.size} account(s).`)
 
