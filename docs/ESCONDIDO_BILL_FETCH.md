@@ -63,9 +63,8 @@ Save the file (e.g. `utility-accounts.csv`) in or next to your project.
 | ESCONDIDO_LOGIN_PASSWORD | Password for that account |
 | NEXT_PUBLIC_SUPABASE_URL | Supabase → Settings → API → Project URL |
 | SUPABASE_SERVICE_ROLE_KEY | Supabase → Settings → API → **service_role** key (not anon) |
-| ESCONDIDO_BRIGHTDATA_API_KEY | *(Optional)* Bright Data **Web Unlocker API** key (Bearer token). When set, the script uses the [Unlocker API](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) (Direct API, no browser). Create an API at [Bright Data](https://brightdata.com/cp/web_access/new) → Web Access APIs → Create API → **Web Unlocker API**; your API key and zone name are in the zone Overview. See [Quickstart](https://docs.brightdata.com/scraping-automation/web-unlocker/quickstart) and [Send your first request](https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request). |
-| ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE | *(Optional)* Your Unlocker API zone name (the name you gave when creating the API). Defaults to `web_unlocker1`. |
-| ESCONDIDO_PROXY_SERVER | *(Optional)* Generic proxy URL for Playwright (e.g. `http://proxy:port`) if not using the Unlocker API. |
+| ESCONDIDO_2CAPTCHA_API_KEY | *(Optional but recommended in CI)* [2Captcha](https://2captcha.com) API key from [Dashboard](https://2captcha.com/enterpage). When set, reCAPTCHA on the login page is solved via 2Captcha (createTask → getTaskResult) and the token is injected before submit. See [Quick start](https://2captcha.com/api-docs/quick-start), [reCAPTCHA v2](https://2captcha.com/api-docs/recaptcha-v2), [reCAPTCHA v2 Enterprise](https://2captcha.com/api-docs/recaptcha-v2-enterprise). |
+| ESCONDIDO_PROXY_SERVER | *(Optional)* Generic proxy URL for Playwright (e.g. `http://proxy:port`). |
 | ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD | *(Optional)* Proxy auth if not embedded in ESCONDIDO_PROXY_SERVER. |
 
 ### Step 4: Push and run the workflow once
@@ -391,8 +390,8 @@ Downstream you can:
   - Expected if `BILL_FETCH_WEBHOOK_URL` is not set. Either set it to a worker that runs the script, or run the script directly on a schedule (e.g. GitHub Actions, server cron).
 
 - **Login page shows reCAPTCHA (e.g. "Privacy - Terms" badge)**  
-  - **Bright Data Web Unlocker API (recommended):** Use the [new Unlocker API](https://docs.brightdata.com/scraping-automation/web-unlocker/introduction) (Direct API — API key only). Create a Web Unlocker API at [Bright Data](https://brightdata.com/cp/web_access/new) → Web Access APIs → Create API → Web Unlocker API. Set **ESCONDIDO_BRIGHTDATA_API_KEY** to your API key (Bearer token from the zone Overview). Zone name defaults to `web_unlocker1`; set **ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE** only if you gave your API a different name. See [5-minute how-to](https://docs.brightdata.com/scraping-automation/web-unlocker/five-minute-how-to) and [Send your first request](https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request).
-  - **When running locally**, captcha often does not appear.
+  - Set **ESCONDIDO_2CAPTCHA_API_KEY** to your [2Captcha](https://2captcha.com) API key (from [Dashboard](https://2captcha.com/enterpage)). The script will submit the captcha to 2Captcha, wait for the solution, inject the token, and submit the form. Ensure your 2Captcha account has balance. See [2Captcha Quick start](https://2captcha.com/api-docs/quick-start) and [reCAPTCHA v2](https://2captcha.com/api-docs/recaptcha-v2) (or [v2 Enterprise](https://2captcha.com/api-docs/recaptcha-v2-enterprise) if the site uses Enterprise).
+  - **When running locally**, captcha often does not appear; in CI, 2Captcha is typically required.
 
 - **Playwright errors on Vercel**  
   - Do not run the Playwright script inside Vercel. Run it in a separate environment (GitHub Actions, Railway, server, etc.) as above.

@@ -10,14 +10,11 @@
  *   ESCONDIDO_LOGIN_EMAIL, ESCONDIDO_LOGIN_PASSWORD
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
- * Optional (recommended in CI for CAPTCHA/unblocking):
- *   Bright Data Web Unlocker API (Direct API — API key only):
- *   Set ESCONDIDO_BRIGHTDATA_API_KEY to your API key (Bearer token).
- *   Create a Web Unlocker API at brightdata.com → Web Access APIs → Create API → Web Unlocker API;
- *   the zone name defaults to web_unlocker1, or set ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE.
- *   Docs: https://docs.brightdata.com/scraping-automation/web-unlocker/introduction
- *   Quickstart: https://docs.brightdata.com/scraping-automation/web-unlocker/quickstart
- *   First request: https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request
+ * Optional (recommended in CI for reCAPTCHA):
+ *   ESCONDIDO_2CAPTCHA_API_KEY — 2Captcha API key from https://2captcha.com/enterpage.
+ *   When set, reCAPTCHA on the login page is solved via 2Captcha (createTask → getTaskResult)
+ *   and the token is injected before submit. See https://2captcha.com/api-docs/quick-start
+ *   and https://2captcha.com/api-docs/recaptcha-v2 (and recaptcha-v2-enterprise if needed).
  *
  * Optional (generic proxy for Playwright): ESCONDIDO_PROXY_SERVER, ESCONDIDO_PROXY_USERNAME, ESCONDIDO_PROXY_PASSWORD
  */
@@ -85,157 +82,8 @@ function normalizeDate(s: string): string {
 
 const log = (msg: string) => console.log(`[Escondido] ${msg}`)
 
-const UNLOCKER_API = "https://api.brightdata.com/request"
-
-/**
- * Fetch a URL via Bright Data Unlocker API (Direct API — API key only).
- * POST /request with Authorization: Bearer <api_key>, body: { zone, url, format }.
- * @see https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request
- */
-async function unlockerRequest(
-  apiKey: string,
-  zone: string,
-  url: string,
-  opts?: { method?: "GET" | "POST"; body?: string }
-): Promise<{ status_code: number; body: string; headers?: Record<string, string> }> {
-  const payload: Record<string, string> = {
-    zone,
-    url,
-    format: "raw",
-  }
-  if (opts?.method === "POST" && opts?.body) {
-    payload.method = "POST"
-    payload.body = opts.body
-  }
-  const res = await fetch(UNLOCKER_API, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(payload),
-  })
-  const raw = await res.text()
-  let data: { status_code?: number; body?: string; headers?: Record<string, string>; error?: string }
-  const isJson = raw.trim().startsWith("{") || raw.trim().startsWith("[")
-  if (isJson) {
-    try {
-      data = JSON.parse(raw) as typeof data
-    } catch {
-      throw new Error(`Unlocker API ${res.status}: response not valid JSON. Check API key (Bearer) and zone (Web Unlocker zone name, e.g. web_unlocker1).`)
-    }
-  } else {
-    if (!res.ok) {
-      throw new Error(`Unlocker API ${res.status}: ${raw.slice(0, 400)}${raw.length > 400 ? "..." : ""}`)
-    }
-    throw new Error(`Unlocker API returned HTML instead of JSON. Check: 1) API key (Bearer) from your Web Unlocker API Overview or Account settings 2) Zone name matches your Unlocker API name (e.g. web_unlocker1). See https://docs.brightdata.com/scraping-automation/web-unlocker/send-your-first-request`)
-  }
-  if (!res.ok || data.error) {
-    throw new Error(data.error || `Unlocker API ${res.status}: ${raw.slice(0, 300)}`)
-  }
-  return {
-    status_code: data.status_code ?? res.status,
-    body: typeof data.body === "string" ? data.body : "",
-    headers: data.headers,
-  }
-}
-
-/**
- * Scrape bills using only the Unlocker API (no Playwright). Requires a Web Unlocker zone.
- * GET portal → parse login form → POST login → parse response for bills.
- */
-async function scrapeBillsWithUnlockerApi(
-  apiKey: string,
-  zone: string,
-  loginEmail: string,
-  loginPassword: string
-): Promise<FetchedBill[]> {
-  log("Using Bright Data Unlocker API (API key).")
-  const bills: FetchedBill[] = []
-  try {
-    log("Fetching portal...")
-    const first = await unlockerRequest(apiKey, zone, PORTAL_URL)
-    let html = first.body
-    if (!html || html.length < 100) {
-      log("Unlocker returned empty or short body.")
-      return bills
-    }
-    if (!/type=["']password["']/i.test(html)) {
-      const loginLinkMatch = html.match(/href=["']([^"']*customerlogin[^"']*)["']/i)
-      if (loginLinkMatch) {
-        const loginUrl = loginLinkMatch[1]!.startsWith("http") ? loginLinkMatch[1] : new URL(loginLinkMatch[1], PORTAL_URL).href
-        log("Fetching login page...")
-        const loginPage = await unlockerRequest(apiKey, zone, loginUrl)
-        html = loginPage.body
-      }
-    }
-    const loginActionMatch = html.match(/<form[^>]*action=["']([^"']+)["'][^>]*>/i)
-    const formAction = loginActionMatch
-      ? (loginActionMatch[1]!.startsWith("http") ? loginActionMatch[1] : new URL(loginActionMatch[1], PORTAL_URL).href)
-      : null
-    const hasLoginForm = /type=["']password["']/i.test(html) && /customerlogin|login/i.test(html)
-    if (formAction && hasLoginForm) {
-      const hiddenInputs = html.match(/<input[^>]*type=["']hidden["'][^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["']/gi) || []
-      const parts: string[] = []
-      for (const tag of hiddenInputs) {
-        const n = tag.match(/name=["']([^"']+)["']/i)?.[1]
-        const v = tag.match(/value=["']([^"']*)["']/i)?.[1] ?? ""
-        if (n) parts.push(`${encodeURIComponent(n)}=${encodeURIComponent(v)}`)
-      }
-      const emailName = html.match(/<input[^>]*name=["']([^"']+)["'][^>]*(?:type=["'](?:email|text)["']|placeholder=[^>]*mail)/i)?.[1]
-        || html.match(/<input[^>]*(?:type=["'](?:email|text)["']|placeholder=[^>]*mail)[^>]*name=["']([^"']+)["']/i)?.[1]
-        || "email"
-      const passName = html.match(/<input[^>]*type=["']password["'][^>]*name=["']([^"']+)["']/i)?.[1]
-        || html.match(/<input[^>]*name=["']([^"']+)["'][^>]*type=["']password["']/i)?.[1]
-        || "password"
-      parts.push(`${encodeURIComponent(emailName)}=${encodeURIComponent(loginEmail)}`)
-      parts.push(`${encodeURIComponent(passName)}=${encodeURIComponent(loginPassword)}`)
-      const body = parts.join("&")
-      log("Posting login form...")
-      const loginRes = await unlockerRequest(apiKey, zone, formAction, { method: "POST", body })
-      html = loginRes.body
-    }
-    const rows = html.split(/<tr[\s>]/i)
-    for (const row of rows) {
-      if (!row.includes("$") || row.length < 20) continue
-      const accountMatch = row.match(/account\s*#?\s*(\d{4,})/i) || row.match(/#\s*(\d{4,})/i)
-      const accountNumber = accountMatch ? accountMatch[1]!.trim() : ""
-      const amountMatch = row.match(/\$[\d,]+\.?\d*/)
-      const amount = amountMatch ? parseFloat(amountMatch[0].replace(/[$,]/g, "")) : 0
-      const dateMatch = row.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g)
-      const periodStart = dateMatch?.[0] ? normalizeDate(dateMatch[0]) : ""
-      const periodEnd = dateMatch?.[1] ? normalizeDate(dateMatch[1]) : periodStart
-      const dueDate = dateMatch?.[2] ? normalizeDate(dateMatch[2]) : null
-      const hrefMatch = row.match(/href=["']([^"']*(?:View\s*Invoice|View)[^"']*)["']/i) || row.match(/href=["']([^"']+)["']/i)
-      const href = hrefMatch ? hrefMatch[1]!.replace(/^["']|["']$/g, "") : ""
-      const pdfUrl = href ? (href.startsWith("http") ? href : new URL(href, PORTAL_URL).href) : null
-      if (accountNumber || amount > 0 || periodStart) {
-        bills.push({
-          accountNumber,
-          periodStart,
-          periodEnd,
-          amountDue: amount,
-          dueDate,
-          externalId: href ? href.slice(0, 500) : null,
-          pdfUrl,
-        })
-      }
-    }
-    const seen = new Set<string>()
-    const unique: FetchedBill[] = []
-    for (const b of bills) {
-      const key = `${b.accountNumber}|${b.periodStart}|${b.amountDue}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      unique.push(b)
-    }
-    log(`Done (Unlocker API). Parsed ${unique.length} bill(s).`)
-    return unique
-  } catch (e) {
-    log(`Unlocker API failed: ${e instanceof Error ? e.message : String(e)}`)
-    return []
-  }
-}
+const TWOCAPTCHA_CREATE = "https://api.2captcha.com/createTask"
+const TWOCAPTCHA_RESULT = "https://api.2captcha.com/getTaskResult"
 
 /** Get reCAPTCHA v2 params only (div with data-sitekey, no data-action). */
 async function getRecaptchaV2Params(
@@ -358,9 +206,10 @@ async function getRecaptchaParams(
 }
 
 /**
- * Solve reCAPTCHA v2 (checkbox + image challenge) using 2Captcha API.
+ * Solve reCAPTCHA v2 (checkbox + image challenge) using 2Captcha API v2.
+ * Workflow: createTask → wait 15s (per 2Captcha limits for reCAPTCHA) → getTaskResult every 5s until ready.
  * @see https://2captcha.com/api-docs/recaptcha-v2
- * Task: RecaptchaV2TaskProxyless with websiteURL, websiteKey, isInvisible: false for visible checkbox.
+ * @see https://2captcha.com/api-docs/limits (wait 10-20s for recaptcha before first getTaskResult)
  */
 async function solveRecaptchaV2With2Captcha(
   apiKey: string,
@@ -378,24 +227,27 @@ async function solveRecaptchaV2With2Captcha(
   }
   if (userAgent) task.userAgent = userAgent
   if (apiDomain) task.apiDomain = apiDomain
-  const createRes = await fetch("https://api.2captcha.com/createTask", {
+  const createRes = await fetch(TWOCAPTCHA_CREATE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ clientKey: apiKey, task }),
   })
-  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
+  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorCode?: string; errorDescription?: string }
   if (createJson.errorId !== 0 || createJson.taskId == null) {
-    const msg = createJson.errorDescription ?? JSON.stringify(createJson)
-    log(`2Captcha v2 createTask failed: ${msg}`)
-    if (/API key is missing|incorrect format/i.test(msg)) {
-      log("In CI: add ESCONDIDO_2CAPTCHA_API_KEY in repo Settings → Secrets (no spaces/newlines).")
-    }
+    log(`2Captcha createTask failed: errorId=${createJson.errorId} ${createJson.errorCode ?? ""} ${createJson.errorDescription ?? ""}`)
+    if (createJson.errorId === 1) log("Check ESCONDIDO_2CAPTCHA_API_KEY (copy from https://2captcha.com/enterpage, no spaces/newlines).")
+    if (createJson.errorId === 10) log("2Captcha balance is zero; add funds at https://2captcha.com/enterpage.")
+    if (createJson.errorId === 5) log("websiteURL missing or invalid; ensure page URL is passed to solver.")
+    if (createJson.errorId === 31) log("Invalid reCAPTCHA sitekey; check the page uses a valid data-sitekey.")
     return null
   }
   const taskId = createJson.taskId
-  for (let i = 0; i < 24; i++) {
-    await new Promise((r) => setTimeout(r, 5000))
-    const resultRes = await fetch("https://api.2captcha.com/getTaskResult", {
+  // Per 2Captcha limits: wait 10-20s for reCAPTCHA before first getTaskResult (avg solve ~30s)
+  const INITIAL_WAIT_MS = 20000
+  await new Promise((r) => setTimeout(r, INITIAL_WAIT_MS))
+  const maxPolls = 40
+  for (let i = 0; i < maxPolls; i++) {
+    const resultRes = await fetch(TWOCAPTCHA_RESULT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clientKey: apiKey, taskId }),
@@ -404,24 +256,35 @@ async function solveRecaptchaV2With2Captcha(
       errorId?: number
       status?: string
       solution?: { gRecaptchaResponse?: string; token?: string }
+      errorCode?: string
       errorDescription?: string
     }
     if (resultJson.status === "ready" && resultJson.solution) {
       const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
-      if (token) return token
+      if (token) {
+        log(`2Captcha v2 solved (poll ${i + 1}).`)
+        return token
+      }
     }
     if (resultJson.errorId !== 0) {
-      log(`2Captcha v2 getTaskResult failed: ${resultJson.errorDescription ?? JSON.stringify(resultJson)}`)
+      log(`2Captcha getTaskResult error: errorId=${resultJson.errorId} ${resultJson.errorCode ?? ""} ${resultJson.errorDescription ?? ""}`)
+      if (resultJson.errorId === 12) log("Captcha unsolvable; workers could not solve it (no charge).")
       return null
     }
+    if (resultJson.status === "processing") {
+      await new Promise((r) => setTimeout(r, 5000))
+      continue
+    }
+    await new Promise((r) => setTimeout(r, 5000))
   }
-  log("2Captcha v2 timed out waiting for solution")
+  log("2Captcha v2 timed out waiting for solution.")
   return null
 }
 
 /**
- * Solve reCAPTCHA v2 Enterprise using 2Captcha API (https://2captcha.com/api-docs/recaptcha-v2-enterprise).
- * Use when the site loads recaptcha/enterprise.js — standard v2 tokens are rejected by Enterprise verification.
+ * Solve reCAPTCHA v2 Enterprise using 2Captcha API.
+ * Same timing as v2: 15s after createTask, then getTaskResult every 5s.
+ * @see https://2captcha.com/api-docs/recaptcha-v2-enterprise
  */
 async function solveRecaptchaV2EnterpriseWith2Captcha(
   apiKey: string,
@@ -435,28 +298,25 @@ async function solveRecaptchaV2EnterpriseWith2Captcha(
     type: "RecaptchaV2EnterpriseTaskProxyless",
     websiteURL: pageUrl,
     websiteKey: siteKey,
-    isInvisible,
+    isInvisible: !!isInvisible,
   }
   if (userAgent) task.userAgent = userAgent
   if (apiDomain) task.apiDomain = apiDomain
-  const createRes = await fetch("https://api.2captcha.com/createTask", {
+  const createRes = await fetch(TWOCAPTCHA_CREATE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ clientKey: apiKey, task }),
   })
-  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
+  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorCode?: string; errorDescription?: string }
   if (createJson.errorId !== 0 || createJson.taskId == null) {
-    const msg = createJson.errorDescription ?? JSON.stringify(createJson)
-    log(`2Captcha Enterprise createTask failed: ${msg}`)
-    if (/API key is missing|incorrect format/i.test(msg)) {
-      log("In CI: add ESCONDIDO_2CAPTCHA_API_KEY in repo Settings → Secrets (no spaces/newlines).")
-    }
+    log(`2Captcha Enterprise createTask failed: errorId=${createJson.errorId} ${createJson.errorCode ?? ""} ${createJson.errorDescription ?? ""}`)
     return null
   }
   const taskId = createJson.taskId
-  for (let i = 0; i < 24; i++) {
-    await new Promise((r) => setTimeout(r, 5000))
-    const resultRes = await fetch("https://api.2captcha.com/getTaskResult", {
+  await new Promise((r) => setTimeout(r, 20000))
+  const maxPolls = 40
+  for (let i = 0; i < maxPolls; i++) {
+    const resultRes = await fetch(TWOCAPTCHA_RESULT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clientKey: apiKey, taskId }),
@@ -465,24 +325,32 @@ async function solveRecaptchaV2EnterpriseWith2Captcha(
       errorId?: number
       status?: string
       solution?: { gRecaptchaResponse?: string; token?: string }
+      errorCode?: string
       errorDescription?: string
     }
     if (resultJson.status === "ready" && resultJson.solution) {
       const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
-      if (token) return token
+      if (token) {
+        log(`2Captcha Enterprise solved (poll ${i + 1}).`)
+        return token
+      }
     }
     if (resultJson.errorId !== 0) {
-      log(`2Captcha Enterprise getTaskResult failed: ${resultJson.errorDescription ?? JSON.stringify(resultJson)}`)
+      log(`2Captcha Enterprise getTaskResult error: errorId=${resultJson.errorId} ${resultJson.errorDescription ?? ""}`)
       return null
     }
+    if (resultJson.status === "processing") {
+      await new Promise((r) => setTimeout(r, 5000))
+      continue
+    }
+    await new Promise((r) => setTimeout(r, 5000))
   }
-  log("2Captcha Enterprise timed out waiting for solution")
+  log("2Captcha Enterprise timed out waiting for solution.")
   return null
 }
 
 /**
- * Solve reCAPTCHA v3 using 2Captcha API (https://2captcha.com).
- * Returns the gRecaptchaResponse token to inject, or null on failure.
+ * Solve reCAPTCHA v3 using 2Captcha API. Same 15s initial wait, 5s poll interval.
  */
 async function solveRecaptchaV3With2Captcha(
   apiKey: string,
@@ -490,7 +358,7 @@ async function solveRecaptchaV3With2Captcha(
   siteKey: string,
   pageAction?: string
 ): Promise<string | null> {
-  const createRes = await fetch("https://api.2captcha.com/createTask", {
+  const createRes = await fetch(TWOCAPTCHA_CREATE, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -504,15 +372,12 @@ async function solveRecaptchaV3With2Captcha(
       },
     }),
   })
-  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number; errorDescription?: string }
-  if (createJson.errorId !== 0 || createJson.taskId == null) {
-    log(`2Captcha createTask failed: ${createJson.errorDescription ?? JSON.stringify(createJson)}`)
-    return null
-  }
+  const createJson = (await createRes.json()) as { errorId?: number; taskId?: number }
+  if (createJson.errorId !== 0 || createJson.taskId == null) return null
   const taskId = createJson.taskId
-  for (let i = 0; i < 24; i++) {
-    await new Promise((r) => setTimeout(r, 5000))
-    const resultRes = await fetch("https://api.2captcha.com/getTaskResult", {
+  await new Promise((r) => setTimeout(r, 20000))
+  for (let i = 0; i < 40; i++) {
+    const resultRes = await fetch(TWOCAPTCHA_RESULT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clientKey: apiKey, taskId }),
@@ -521,18 +386,14 @@ async function solveRecaptchaV3With2Captcha(
       errorId?: number
       status?: string
       solution?: { gRecaptchaResponse?: string; token?: string }
-      errorDescription?: string
     }
     if (resultJson.status === "ready" && resultJson.solution) {
       const token = resultJson.solution.gRecaptchaResponse ?? resultJson.solution.token
       if (token) return token
     }
-    if (resultJson.errorId !== 0) {
-      log(`2Captcha getTaskResult failed: ${resultJson.errorDescription ?? JSON.stringify(resultJson)}`)
-      return null
-    }
+    if (resultJson.errorId !== 0) return null
+    await new Promise((r) => setTimeout(r, 5000))
   }
-  log("2Captcha timed out waiting for solution")
   return null
 }
 
@@ -651,11 +512,14 @@ async function getPortalFrame(page: import("playwright").Page): Promise<import("
 /**
  * Scrape bills from the Invoice Cloud portal.
  * Real flow (from UI): Landing → Sign In link → Login form → Dashboard → "Pay My Invoices" → Open Invoices table.
+ * When reCAPTCHA appears, uses 2Captcha (if ESCONDIDO_2CAPTCHA_API_KEY set) to get token, inject, and submit.
  */
 async function scrapeBillsFromPortal(
   page: import("playwright").Page,
   loginEmail: string,
-  loginPassword: string
+  loginPassword: string,
+  twoCaptchaApiKey: string | undefined,
+  userAgent: string
 ): Promise<FetchedBill[]> {
   log("Loading portal...")
   await page.goto(PORTAL_URL, { waitUntil: "domcontentloaded", timeout: 60000 })
@@ -677,8 +541,7 @@ async function scrapeBillsFromPortal(
     log(`Sign In link: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // 2) Login with retries: fill form → Sign In → if captcha, click checkbox and submit → retry until dashboard or max attempts
-  // With Bright Data Web Unlocker proxy, CAPTCHAs are typically avoided or handled.
+  // 2) Login with retries: fill form → Sign In → if captcha, use 2Captcha (or checkbox fallback) → inject token and submit
   log("Looking for email/password inputs...")
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
@@ -707,33 +570,79 @@ async function scrapeBillsFromPortal(
     }
     await page.waitForTimeout(4000)
     if (!page.url().includes("customerlogin")) {
-      log("Reached dashboard (no captcha or proxy handled it).")
+      log("Reached dashboard.")
       break
     }
     const bodyText = await frame.locator("body").innerText().catch(() => "")
-    const needsCheckbox = /checkbox\s*challenge|complete\s*the\s*checkbox/i.test(bodyText)
+    const needsCheckbox = /checkbox\s*challenge|complete\s*the\s*checkbox|recaptcha/i.test(bodyText)
     if (!needsCheckbox) {
       await page.waitForTimeout(3000)
       if (!page.url().includes("customerlogin")) break
     }
-    log("Captcha shown; re-filling password, clicking checkbox, then submitting...")
+    log("Captcha shown; solving with 2Captcha or checkbox fallback...")
     await passwordInput.fill(loginPassword)
     await page.waitForTimeout(1000)
-    const clicked = await tryClickRecaptchaCheckbox(page)
-    if (clicked) {
-      await page.waitForTimeout(4000)
-      try {
-        const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-        if (formEl) {
-          await formEl.evaluate((form: HTMLFormElement) => form.submit())
-          await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
-          log("Submitted after checkbox.")
-          break
+
+    let submittedAfterCaptcha = false
+    if (twoCaptchaApiKey) {
+      const params = await getRecaptchaV2ParamsLenient(frame)
+      if (params?.siteKey) {
+        const pageUrl = page.url()
+        log(`2Captcha: submitting task for ${params.isEnterprise ? "Enterprise" : "v2"} siteKey=${params.siteKey.slice(0, 12)}...`)
+        const token = params.isEnterprise
+          ? await solveRecaptchaV2EnterpriseWith2Captcha(
+              twoCaptchaApiKey,
+              pageUrl,
+              params.siteKey,
+              false,
+              userAgent,
+              params.apiDomain
+            )
+          : await solveRecaptchaV2With2Captcha(
+              twoCaptchaApiKey,
+              pageUrl,
+              params.siteKey,
+              false,
+              userAgent,
+              params.apiDomain
+            )
+        if (token) {
+          const injected = await injectRecaptchaToken(frame, token)
+          if (injected) {
+            log("Injected 2Captcha token; submitting form...")
+            try {
+              const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+              if (formEl) {
+                await formEl.evaluate((form: HTMLFormElement) => form.submit())
+                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 20000 })
+                submittedAfterCaptcha = true
+                log("Submitted after 2Captcha token.")
+              }
+            } catch (_) {}
+          } else {
+            log("Could not inject 2Captcha token into page.")
+          }
         }
-      } catch {
-        //
+      } else {
+        log("Could not get reCAPTCHA siteKey from page.")
       }
     }
+    if (!submittedAfterCaptcha) {
+      const clicked = await tryClickRecaptchaCheckbox(page)
+      if (clicked) {
+        await page.waitForTimeout(4000)
+        try {
+          const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+          if (formEl) {
+            await formEl.evaluate((form: HTMLFormElement) => form.submit())
+            await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 15000 })
+            log("Submitted after checkbox.")
+            submittedAfterCaptcha = true
+          }
+        } catch (_) {}
+      }
+    }
+    if (submittedAfterCaptcha) break
     await page.waitForTimeout(2000)
   }
 
@@ -879,57 +788,7 @@ export async function runEscondidoBillFetch(options?: {
 
   const supabase = getSupabase()
   const accountToProperty = await getPropertyAccountMapping(supabase)
-
-  const unlockerApiKey = process.env.ESCONDIDO_BRIGHTDATA_API_KEY?.trim()
-  const unlockerZone = process.env.ESCONDIDO_BRIGHTDATA_UNLOCKER_ZONE?.trim() || "web_unlocker1"
-  if (unlockerApiKey) {
-    const bills = await scrapeBillsWithUnlockerApi(unlockerApiKey, unlockerZone, loginEmail, loginPassword)
-    console.log(`Scraped ${bills.length} bill(s) from portal (Unlocker API). Property mapping has ${accountToProperty.size} account(s).`)
-    const errors: string[] = []
-    let inserted = 0
-    const defaultAccount =
-      accountToProperty.size === 1 ? Array.from(accountToProperty.keys())[0] : null
-    const defaultPropertyId = defaultAccount ? accountToProperty.get(defaultAccount) : null
-    for (const bill of bills) {
-      if (!bill.periodStart && !bill.pdfUrl) {
-        errors.push(`Skipped bill (no period or PDF): ${JSON.stringify(bill)}`)
-        continue
-      }
-      const periodStart = bill.periodStart || new Date().toISOString().slice(0, 10)
-      const periodEnd = bill.periodEnd || periodStart
-      const accountNumber = bill.accountNumber || defaultAccount || ""
-      const propertyId = accountToProperty.get(accountNumber) || defaultPropertyId
-      if (!propertyId) {
-        errors.push(`No property mapped for account "${accountNumber}", skipping bill ${periodStart}`)
-        continue
-      }
-      const { error } = await supabase
-        .from("utility_provider_bills")
-        .upsert(
-          {
-            property_id: propertyId,
-            utility_key: UTILITY_KEY,
-            account_number: accountNumber,
-            billing_period_start: periodStart,
-            billing_period_end: periodEnd,
-            amount_due: bill.amountDue >= 0 ? bill.amountDue : 0,
-            due_date: bill.dueDate,
-            external_id: bill.externalId,
-            pdf_url: bill.pdfUrl,
-            fetched_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "property_id,utility_key,billing_period_start", ignoreDuplicates: true }
-        )
-      if (error) {
-        errors.push(`Insert failed ${periodStart}: ${error.message}`)
-      } else {
-        inserted++
-      }
-    }
-    console.log(`Inserted ${inserted} new bill(s).`)
-    return { inserted, errors }
-  }
+  const twoCaptchaApiKey = process.env.ESCONDIDO_2CAPTCHA_API_KEY?.trim()
 
   let browser: Awaited<ReturnType<typeof chromium.launch>> | Awaited<ReturnType<typeof chromium.connect>>
   if (options?.browserWSEndpoint) {
@@ -984,7 +843,7 @@ export async function runEscondidoBillFetch(options?: {
       log("Tracing enabled (CI): trace.zip will be saved for Playwright Trace Viewer.")
     }
     const page = await context.newPage()
-    const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword)
+    const bills = await scrapeBillsFromPortal(page, loginEmail, loginPassword, twoCaptchaApiKey, userAgent)
 
     console.log(`Scraped ${bills.length} bill(s) from portal. Property mapping has ${accountToProperty.size} account(s).`)
 
