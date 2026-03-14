@@ -2,6 +2,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/client"
 
 const UTILITY_KEY = "escondido_water"
 const INVOICE_DOMAIN = "invoicecloud.com"
+const DOCUMENT_DOMAIN = "onlinebiller.com"
 
 export type EmailPayload = {
   from?: string
@@ -20,27 +21,36 @@ export type IngestResult = {
   error?: string
 }
 
-/** Extract URLs from HTML or plain text that look like Invoice Cloud view/pay links */
+/** Extract the single primary "View invoice or pay now" link from the email. Returns at most one URL so we create one bill per email. */
 export function extractInvoiceLinks(html: string, text: string): string[] {
   const combined = html || text || ""
-  const links: string[] = []
-  const hrefRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi
+  const hrefRegex = /<a\s+([^>]*)href=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi
   let m: RegExpExecArray | null
   while ((m = hrefRegex.exec(combined)) !== null) {
-    const url = m[1]!.trim()
-    if (
-      url.includes(INVOICE_DOMAIN) &&
-      (url.includes("view") || url.includes("invoice") || url.includes("pay") || url.includes("portal"))
-    ) {
-      links.push(url)
+    const url = m[2]!.trim()
+    const beforeRight = (m[1]! + m[3]!).replace(/\s+/g, " ")
+    const inner = (m[4]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    const linkText = (beforeRight + " " + inner).toLowerCase()
+    const isPrimary =
+      linkText.includes("view invoice") ||
+      linkText.includes("view invoice or pay") ||
+      linkText.includes("pay now") ||
+      (linkText.includes("invoice") && linkText.includes("pay"))
+    const isInvoiceCloud = url.includes(INVOICE_DOMAIN)
+    const isDocLink = url.includes(DOCUMENT_DOMAIN)
+    if ((isInvoiceCloud || isDocLink) && (isPrimary || url.includes("invoice") || url.includes("view"))) {
+      if (isPrimary || isDocLink) return [url]
     }
   }
-  const urlOnlyRegex = /https?:\/\/[^\s<>"']*invoicecloud[^\s<>"']*/gi
-  combined.replace(urlOnlyRegex, (u) => {
-    if (!links.includes(u)) links.push(u)
-    return u
-  })
-  return Array.from(new Set(links))
+  const fallbackRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi
+  while ((m = fallbackRegex.exec(combined)) !== null) {
+    const url = m[1]!.trim()
+    if (url.includes(INVOICE_DOMAIN) && (url.includes("view") || url.includes("invoice") || url.includes("portal"))) {
+      return [url]
+    }
+    if (url.includes(DOCUMENT_DOMAIN)) return [url]
+  }
+  return []
 }
 
 /** Resolve href to absolute URL */
@@ -132,7 +142,13 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     }
   }
 
-  // 2) Same idea: href first, then look for link text (order reversed for "href contains pdf/download")
+  // 2) Direct link to document host (e.g. docs.onlinebiller.com) = the actual bill
+  if (!pdfUrl) {
+    const docHostMatch = html.match(new RegExp(`href=["'](https?://[^"']*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"']*)["']`, "i"))
+    if (docHostMatch && docHostMatch[1]) {
+      pdfUrl = docHostMatch[1].trim()
+    }
+  }
   if (!pdfUrl) {
     const pdfHrefPatterns = [
       /<a\s+[^>]*href=["']([^"']*\.pdf[^"']*)["']/i,
@@ -259,19 +275,22 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
       let pageHtml = await res.text()
       let parsed = parseInvoicePage(pageHtml, invoiceUrl)
 
-      // Step 2: "View invoice" on the bill page opens the document. Follow that link and get the final document URL.
+      // Step 2: "View invoice" on the bill page opens the document (often redirects to docs.onlinebiller.com). Use final URL after redirects.
       const viewInvoiceUrl = parsed.pdfUrl
       if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf")) {
         try {
           const res2 = await fetch(viewInvoiceUrl, fetchOptions)
           const contentType = res2.headers.get("content-type") ?? ""
+          const finalUrl = res2.url || viewInvoiceUrl
           if (contentType.toLowerCase().includes("application/pdf")) {
-            parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
+            parsed = { ...parsed, pdfUrl: finalUrl }
+          } else if (finalUrl.includes(DOCUMENT_DOMAIN)) {
+            parsed = { ...parsed, pdfUrl: finalUrl }
           } else {
             const pageHtml2 = await res2.text()
-            const parsed2 = parseInvoicePage(pageHtml2, viewInvoiceUrl)
+            const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
             if (parsed2.pdfUrl) parsed = { ...parsed, pdfUrl: parsed2.pdfUrl }
-            else parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
+            else parsed = { ...parsed, pdfUrl: finalUrl }
             if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
           }
         } catch {
