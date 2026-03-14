@@ -474,6 +474,40 @@ async function injectRecaptchaToken(
 }
 
 /**
+ * After injecting a token, verify what the page "sees" — textarea value and getResponse().
+ * If getResponse() is empty, the site's Sign In handler likely won't see the token when clicked.
+ */
+async function verifyCaptchaAfterInjection(frame: import("playwright").Frame): Promise<{
+  textareaLength: number
+  getResponseLength: number
+  getResponseMatches: boolean
+}> {
+  const result = await frame.evaluate(() => {
+    const textareas = document.querySelectorAll<HTMLTextAreaElement>("textarea[id^='g-recaptcha-response'], textarea[name='g-recaptcha-response']")
+    let textareaLength = 0
+    for (const el of textareas) {
+      if (el.value && el.value.length > textareaLength) textareaLength = el.value.length
+    }
+    let getResponseLength = 0
+    let getResponseMatches = false
+    try {
+      const g = (window as unknown as { grecaptcha?: { enterprise?: { getResponse: (id?: number) => string }; getResponse: (id?: number) => string } }).grecaptcha
+      if (g?.enterprise?.getResponse) {
+        const r = g.enterprise.getResponse()
+        getResponseLength = r ? r.length : 0
+        getResponseMatches = r !== ""
+      } else if (g?.getResponse) {
+        const r = g.getResponse()
+        getResponseLength = r ? r.length : 0
+        getResponseMatches = r !== ""
+      }
+    } catch (_) {}
+    return { textareaLength, getResponseLength, getResponseMatches }
+  })
+  return result
+}
+
+/**
  * Get the frame that contains the Invoice Cloud portal (main frame after redirect or iframe).
  */
 async function getPortalFrame(page: import("playwright").Page): Promise<import("playwright").Frame> {
@@ -608,36 +642,40 @@ async function scrapeBillsFromPortal(
               params.apiDomain
             )
         if (token) {
+          log(`2Captcha token received (length ${token.length}); injecting...`)
           const injected = await injectRecaptchaToken(frame, token)
           if (injected) {
+            const verification = await verifyCaptchaAfterInjection(frame)
+            log(`After injection: g-recaptcha-response textarea length=${verification.textareaLength}, grecaptcha.getResponse() length=${verification.getResponseLength}${verification.getResponseMatches ? " (page sees token)" : " (page does NOT see token — Sign In may fail)"}`)
             injectedTokenThisAttempt = true
             await page.waitForTimeout(1000)
             try {
-              log("Submitting form with token (native form.submit so g-recaptcha-response is in POST)...")
-              const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
-              if (formEl) {
-                await formEl.evaluate((form: HTMLFormElement) => form.submit())
-                await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-                submittedAfterCaptcha = true
-                log("Submitted after 2Captcha token.")
-              }
-            } catch (_) {}
-            if (!submittedAfterCaptcha) {
+              log("Clicking Sign In (token injected)...")
+              const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
+              await btnByRole.click()
+              await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+              submittedAfterCaptcha = true
+              log("Submitted after 2Captcha token.")
+            } catch {
               try {
-                log("Form submit did not navigate; trying Sign In button click...")
-                const btnByRole = (frame as import("playwright").Frame).getByRole("button", { name: /sign\s*in/i })
-                await btnByRole.click()
+                log("Sign In button failed; trying submit input/button in form...")
+                const submitInForm = passwordInput.locator("xpath=ancestor::form[1]").locator('input[type="submit"], button, a:has-text("Sign In")').first()
+                await submitInForm.click()
                 await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
                 submittedAfterCaptcha = true
-                log("Submitted after 2Captcha token (button click).")
-              } catch {
+                log("Submitted after 2Captcha token (fallback click).")
+              } catch (_) {
                 try {
-                  const submitInForm = passwordInput.locator("xpath=ancestor::form[1]").locator('input[type="submit"], button, a:has-text("Sign In")').first()
-                  await submitInForm.click()
-                  await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
-                  submittedAfterCaptcha = true
-                  log("Submitted after 2Captcha token (fallback click).")
-                } catch (_) {
+                  log("Click did not navigate; trying native form.submit()...")
+                  const formEl = await passwordInput.locator("xpath=ancestor::form[1]").elementHandle()
+                  if (formEl) {
+                    await formEl.evaluate((form: HTMLFormElement) => form.submit())
+                    await page.waitForURL((url) => !url.href.includes("customerlogin"), { timeout: 25000 })
+                    submittedAfterCaptcha = true
+                    log("Submitted after 2Captcha token (form.submit).")
+                  }
+                } catch (_) {}
+                if (!submittedAfterCaptcha) {
                   log("Sign In did not navigate; will retry next attempt (do not click checkbox — it would clear the token).")
                 }
               }
