@@ -546,7 +546,7 @@ async function scrapeBillsFromPortal(
   const emailInput = loc('input[type="email"], input[name*="mail" i], input[id*="mail" i], input[placeholder*="mail" i], input[type="text"]').first()
   const passwordInput = loc('input[type="password"]').first()
   await emailInput.waitFor({ state: "visible", timeout: 15000 })
-  const MAX_LOGIN_ATTEMPTS = 8
+  const MAX_LOGIN_ATTEMPTS = 2
   for (let attempt = 1; attempt <= MAX_LOGIN_ATTEMPTS; attempt++) {
     log(`Login attempt ${attempt}/${MAX_LOGIN_ATTEMPTS}...`)
     await emailInput.fill(loginEmail)
