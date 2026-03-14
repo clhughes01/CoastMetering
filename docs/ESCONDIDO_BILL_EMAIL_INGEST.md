@@ -90,6 +90,52 @@ To run the ingest once without waiting for the schedule:
 
 3. Replace `YOUR_APP` and `YOUR_CRON_SECRET` with your real values. A successful run returns JSON like `{ "ok": true, "processed": N, "totalBills": M, "details": [...] }`.
 
+---
+
+## How to verify it worked
+
+After deploying, use one or more of these:
+
+**1. Trigger the cron manually**
+
+In a terminal (use your real Vercel URL and `CRON_SECRET`):
+
+```bash
+curl -s -X GET "https://YOUR_APP.vercel.app/api/cron/ingest-escondido-emails" \
+  -H "Authorization: Bearer YOUR_CRON_SECRET"
+```
+
+- **`{ "ok": true, "processed": 0, "totalBills": 0, "details": [] }`** — Worked. IMAP connected and ran; no bill emails were in the last 7 days (or they were already processed). Safe.
+- **`{ "ok": true, "processed": 2, "totalBills": 2, "details": [...] }`** — Worked. It processed 2 emails and created/updated 2 bills.
+- **`{ "error": "Unauthorized" }`** — Wrong or missing `CRON_SECRET`. Check the header or query param.
+- **`{ "error": "Missing IMAP config", ... }`** — One of `ESCONDIDO_IMAP_HOST`, `ESCONDIDO_IMAP_USER`, or `ESCONDIDO_IMAP_PASSWORD` is not set in Vercel (or not present after redeploy).
+- **`{ "ok": false, "error": "..." }`** — Often an IMAP/auth problem (e.g. wrong App Password, 2FA blocking). Read the `error` message.
+
+**2. Check Vercel**
+
+- **Deployments** — Your latest deploy should show “Ready”. Redeploy if you added env vars after the last deploy.
+- **Cron** — **Project → Settings → Crons** (or **Logs** filtered by the cron path). After the next scheduled run (e.g. 12:00 UTC), you’ll see a request to `/api/cron/ingest-escondido-emails` and its response.
+- **Logs / Functions** — Open a deployment → **Functions** or **Logs**, trigger the cron (or wait for the schedule), and look for that route’s log line and any error stack.
+
+**3. Check Supabase**
+
+- **Table Editor → `utility_bill_emails`** — New rows appear when an email was ingested (subject, from_address, etc.).
+- **Table Editor → `utility_provider_bills`** — New or updated rows have `source_email_id` and `invoice_url` set when a bill was created from an email.
+
+If the manual `curl` returns `ok: true`, the cron is working. `processed: 0` just means no (new) bill emails were found in the last 7 days.
+
+---
+
+## Troubleshooting
+
+**`[AUTHENTICATIONFAILED] Invalid credentials (Failure)` (Gmail IMAP)**
+
+1. **Use an App Password** — Normal Gmail password does not work with IMAP when 2-Step Verification is on. Google Account → Security → 2-Step Verification → App passwords → create one for **Mail** / **Other (e.g. "CoastMetering")**. Copy the **16-character** password (e.g. `abcdefghijklmnop`); Gmail may show it with spaces — paste **without** spaces.
+2. **Test locally** — In the project root, add to `.env`: `ESCONDIDO_IMAP_HOST=imap.gmail.com`, `ESCONDIDO_IMAP_USER=your@gmail.com`, `ESCONDIDO_IMAP_PASSWORD=your16charapppassword`. Run `npx tsx scripts/test-imap-login.ts`. If it says "IMAP login OK", the credentials work; then the issue is how they’re set in Vercel.
+3. **Set in Vercel** — Delete the existing `ESCONDIDO_IMAP_PASSWORD` variable and add it again. Paste only the 16 characters, no spaces or newlines. Ensure it’s set for **Production** (or the environment your cron uses).
+4. **Redeploy** — Deployments → ⋮ on latest deployment → **Redeploy**. Cron uses the env from the deployment; a new run alone does not reload env.
+5. **Gmail** — Settings → See all settings → Forwarding and POP/IMAP → **Enable IMAP**. Use the same Gmail account for the App Password as `ESCONDIDO_IMAP_USER`.
+
 ### Step 9: Ensure properties are mapped to utility accounts
 
 Bills are attached to properties using `property_utility_accounts`. For Escondido Water, each property that has bills must have a row with `utility_key = 'escondido_water'` and the correct `account_number`. Add or import those in your admin (e.g. **Admin → Utility accounts** or the import endpoint) before or after setup. If only one property/account is mapped, that property is used for all ingested bills.

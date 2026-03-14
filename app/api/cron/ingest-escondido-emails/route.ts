@@ -5,9 +5,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/client"
 import { ingestEscondidoEmail, type EmailPayload } from "@/lib/escondido-email-ingest"
 
 const CRON_SECRET = process.env.CRON_SECRET
-const IMAP_HOST = process.env.ESCONDIDO_IMAP_HOST
-const IMAP_USER = process.env.ESCONDIDO_IMAP_USER
-const IMAP_PASSWORD = process.env.ESCONDIDO_IMAP_PASSWORD
+const IMAP_HOST = process.env.ESCONDIDO_IMAP_HOST?.trim()
+const IMAP_USER = process.env.ESCONDIDO_IMAP_USER?.trim()
+const IMAP_PASSWORD = process.env.ESCONDIDO_IMAP_PASSWORD?.trim()
 const IMAP_PORT = parseInt(process.env.ESCONDIDO_IMAP_PORT ?? "993", 10)
 const IMAP_TLS = process.env.ESCONDIDO_IMAP_TLS !== "false"
 const MAX_EMAILS_PER_RUN = parseInt(process.env.ESCONDIDO_IMAP_MAX_EMAILS ?? "20", 10)
@@ -138,15 +138,24 @@ export async function GET(request: NextRequest) {
     }
     await client.logout()
   } catch (err) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        processed: processed.length,
-        totalBills,
-      },
-      { status: 500 }
-    )
+    const message = err instanceof Error ? err.message : String(err)
+    const authFailed =
+      message.includes("AUTHENTICATIONFAILED") ||
+      (err as { authenticationFailed?: boolean }).authenticationFailed
+    const body: Record<string, unknown> = {
+      ok: false,
+      error: message,
+      processed: processed.length,
+      totalBills,
+    }
+    if (authFailed) {
+      body.debug = {
+        imap_user_length: IMAP_USER?.length ?? 0,
+        imap_password_length: IMAP_PASSWORD?.length ?? 0,
+        hint: "Password must be 16 chars (Gmail App Password). If length is wrong, re-paste in Vercel with no spaces/newlines.",
+      }
+    }
+    return NextResponse.json(body, { status: 500 })
   }
 
   return NextResponse.json({
