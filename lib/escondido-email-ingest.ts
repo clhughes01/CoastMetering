@@ -89,13 +89,18 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   let periodStart = ""
   let periodEnd = ""
 
-  // Account number: try several label patterns, then bare #digits, then URL params
+  // Account number: Escondido uses 10-digit account numbers (e.g. 3409446369). Require 8+ digits so we never capture years (2025) or short IDs.
   const accountPatterns = [
-    /account\s*#?\s*[:\s]*(\d{4,})/i,
-    /account\s*number\s*[:\s]*(\d{4,})/i,
-    /customer\s*account\s*[:\s#]*(\d{4,})/i,
-    /(?:account|acct)\s*no\.?\s*[:\s]*(\d{4,})/i,
-    /#\s*(\d{4,})/,
+    /ACCOUNT\s*NUMBER[^0-9]*(\d{8,12})/i,
+    /ACCOUNT\s*#?\s*[:\s]*(\d{8,12})/i,
+    /Account\s*#?\s*[:\s]*(?:<[^>]+>|\s)*(\d{8,12})/i,
+    /Account\s*number\s*[:\s]*(?:<[^>]+>|\s)*(\d{8,12})/i,
+    /account\s*#?\s*[:\s]*(\d{8,12})/i,
+    /account\s*number\s*[:\s]*(\d{8,12})/i,
+    /customer\s*account\s*[:\s#]*(?:<[^>]+>|\s)*(\d{8,12})/i,
+    /(?:account|acct)\s*no\.?\s*[:\s]*(\d{8,12})/i,
+    /\bAccount\s*#\s*[:\s]*(\d{8,12})/i,
+    /(?:^|[>\s])#\s*(\d{8,12})\b/,
   ]
   for (const re of accountPatterns) {
     const m = html.match(re)
@@ -105,8 +110,12 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     }
   }
   if (!accountNumber) {
-    const urlAccount = pageUrl.match(/account(?:number|id)?[=:](\d{4,})/i) || pageUrl.match(/[?&]id=(\d{4,})/)
+    const urlAccount = pageUrl.match(/account(?:number|id)?[=:](\d{8,12})/i) || pageUrl.match(/[?&]id=(\d{8,12})/)
     if (urlAccount) accountNumber = urlAccount[1]!.trim()
+  }
+  if (!accountNumber) {
+    const inTable = html.match(/Account\s*#?[^<]*<\/[^>]+>\s*<[^>]+>[^<]*(\d{8,12})/i)
+    if (inTable && inTable[1]) accountNumber = inTable[1].trim()
   }
 
   const amountMatch = html.match(/\$[\d,]+\.?\d*/)
@@ -121,33 +130,44 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   const dueLabelMatch = html.match(/due\s*date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
   if (dueLabelMatch) dueDate = normalizeDate(dueLabelMatch[1]!)
 
-  // PDF / invoice link: often behind "View invoice" or "Download" button. Check link text first, then hrefs, then JS.
+  // PDF / document link: On "Your Invoice" page the blue "View Invoice" link goes to the actual bill (often docs.onlinebiller.com).
   let pdfUrl: string | null = null
 
-  // 1) Find any <a href="...">...</a> whose inner text (strip tags) contains "view invoice" / "view pdf" / "download"
-  const linkBlockRegex = /<a\s+([^>]*)>([\s\S]*?)<\/a>/gi
-  let linkMatch: RegExpExecArray | null
-  while ((linkMatch = linkBlockRegex.exec(html)) !== null) {
-    const attrs = linkMatch[1]!
-    const inner = linkMatch[2]!.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-    if (/view\s*invoice|view\s*pdf|download\s*pdf|download\s*bill|print\s*invoice|get\s*pdf/i.test(inner)) {
-      const hrefMatch = attrs.match(/href=["']([^"']+)["']/i)
-      if (hrefMatch && hrefMatch[1]) {
-        const raw = hrefMatch[1].trim()
-        if (raw && !raw.startsWith("javascript:")) {
-          pdfUrl = resolveUrl(raw, pageUrl)
-          break
+  // 1) Direct link to document host (docs.onlinebiller.com/documents.php) = the actual bill — prefer this
+  const docHostRegex = new RegExp(`href=["'](https?://[^"']*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"']*)["']`, "gi")
+  let docMatch = docHostRegex.exec(html)
+  if (docMatch && docMatch[1]) {
+    pdfUrl = docMatch[1].trim()
+  }
+  if (!pdfUrl) {
+    const docUrlAnywhere = html.match(new RegExp(`(https?://[^"'\\s<>]*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"'\\s<>]*)`, "i"))
+    if (docUrlAnywhere && docUrlAnywhere[1]) pdfUrl = docUrlAnywhere[1].trim()
+  }
+
+  // 2) "View Invoice" link on the summary page (Options column) — href may be relative or go to invoicecloud then redirect
+  if (!pdfUrl) {
+    const linkBlockRegex = /<a\s+([^>]*)>([\s\S]*?)<\/a>/gi
+    let linkMatch: RegExpExecArray | null
+    while ((linkMatch = linkBlockRegex.exec(html)) !== null) {
+      const attrs = linkMatch[1]!
+      const inner = (linkMatch[2]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+      if (/view\s*invoice|view\s*pdf|download\s*(?:pdf|bill)|print\s*invoice/i.test(inner)) {
+        const hrefMatch = attrs.match(/href=["']([^"']+)["']/i)
+        if (hrefMatch && hrefMatch[1]) {
+          const raw = hrefMatch[1].trim()
+          if (raw && !raw.startsWith("javascript:")) {
+            pdfUrl = resolveUrl(raw, pageUrl)
+            break
+          }
         }
       }
     }
   }
 
-  // 2) Direct link to document host (e.g. docs.onlinebiller.com) = the actual bill
+  // 3) JavaScript that opens the document URL (e.g. window.open or location)
   if (!pdfUrl) {
-    const docHostMatch = html.match(new RegExp(`href=["'](https?://[^"']*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"']*)["']`, "i"))
-    if (docHostMatch && docHostMatch[1]) {
-      pdfUrl = docHostMatch[1].trim()
-    }
+    const jsDocUrl = html.match(new RegExp(`["'](https?://[^"']*${DOCUMENT_DOMAIN.replace(".", "\\.")}[^"']*)["']`, "i"))
+    if (jsDocUrl && jsDocUrl[1]) pdfUrl = jsDocUrl[1].trim()
   }
   if (!pdfUrl) {
     const pdfHrefPatterns = [
@@ -285,13 +305,20 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
           if (contentType.toLowerCase().includes("application/pdf")) {
             parsed = { ...parsed, pdfUrl: finalUrl }
           } else if (finalUrl.includes(DOCUMENT_DOMAIN)) {
+            const pageHtml2 = await res2.text()
+            const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
             parsed = { ...parsed, pdfUrl: finalUrl }
+            if (parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
+            if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
+            if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
           } else {
             const pageHtml2 = await res2.text()
             const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
             if (parsed2.pdfUrl) parsed = { ...parsed, pdfUrl: parsed2.pdfUrl }
             else parsed = { ...parsed, pdfUrl: finalUrl }
             if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
+            if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
+            if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
           }
         } catch {
           if (viewInvoiceUrl) parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
