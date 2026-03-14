@@ -424,8 +424,8 @@ function getChallengeFrame(page: import("playwright").Page): import("playwright"
 }
 
 /**
- * Solve one reCAPTCHA image challenge: screenshot grid, ask GPT-4o for tile indices, click them, click Verify.
- * Returns the instruction text (for logging) or empty string if no challenge/solve attempted.
+ * Solve one reCAPTCHA image challenge: screenshot each tile separately, send all to GPT-4o, get indices to click.
+ * Per-tile images give much better accuracy than one grid image.
  */
 async function solveRecaptchaImageWithVision(
   page: import("playwright").Page,
@@ -445,41 +445,49 @@ async function solveRecaptchaImageWithVision(
   if (!instruction) return false
   log(`${roundLabel} Image challenge: "${instruction.slice(0, 60)}${instruction.length > 60 ? "..." : ""}"`)
   const table = challengeFrame.locator("table.rc-imageselect-table-33, table.rc-imageselect-table-44").first()
-  const tileCount = await table.locator("td").count().catch(() => 0)
+  const tiles = table.locator("td")
+  const tileCount = await tiles.count().catch(() => 0)
   if (tileCount === 0) return false
-  const gridSize = tileCount <= 9 ? 9 : 16
   try {
-    const screenshot = await challengeFrame.locator("table").first().screenshot({ timeout: 5000 })
-    if (!screenshot || screenshot.length < 100) return false
-    const base64 = screenshot.toString("base64")
+    const tileImages: string[] = []
+    for (let i = 0; i < tileCount; i++) {
+      const buf = await tiles.nth(i).screenshot({ timeout: 3000 }).catch(() => null)
+      if (buf && buf.length > 50) tileImages.push(buf.toString("base64"))
+      else tileImages.push("")
+    }
+    if (tileImages.every((b) => !b)) return false
+    const content: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [
+      {
+        type: "text",
+        text: `You are solving a reCAPTCHA image challenge. The instruction is: "${instruction}"
+
+I am sending you ${tileCount} tile images in order: first image = index 0, second = index 1, ... last = index ${tileCount - 1}.
+
+Rules: Only include the index if the tile CLEARLY and unambiguously shows what the instruction asks for. Partial matches or doubtful tiles must be excluded. When in doubt, leave it out.
+
+Reply with ONLY a JSON array of 0-based indices that match. Example: [0,2,5]. If none match, reply [].`,
+      },
+    ]
+    for (let i = 0; i < tileImages.length; i++) {
+      if (tileImages[i]) content.push({ type: "image_url", image_url: { url: `data:image/png;base64,${tileImages[i]}` } })
+    }
     const openai = new OpenAI({ apiKey })
     const resp = await openai.chat.completions.create({
       model: "gpt-4o",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `This is a reCAPTCHA image challenge. Instruction: "${instruction}". The image shows a grid of ${gridSize} tiles (0-indexed left to right, top to bottom). Reply with ONLY a JSON array of the 0-based indices of tiles that match the instruction. Example: [0,2,5] or [1,3,4,7]. If none match, reply [].`,
-            },
-            { type: "image_url", image_url: { url: `data:image/png;base64,${base64}` } },
-          ],
-        },
-      ],
-      max_tokens: 100,
+      messages: [{ role: "user", content }],
+      max_tokens: 150,
     })
-    const content = resp.choices[0]?.message?.content?.trim() ?? ""
-    const jsonMatch = content.match(/\[[\d,\s]*\]/)
+    const text = resp.choices[0]?.message?.content?.trim() ?? ""
+    const jsonMatch = text.match(/\[[\d,\s]*\]/)
     const indices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : []
     if (!Array.isArray(indices) || indices.length === 0) {
       log(`${roundLabel} Vision returned no tiles to click; clicking Verify anyway.`)
     } else {
-      const tiles = table.locator("td")
-      for (const i of indices) {
-        if (i >= 0 && i < tileCount) await tiles.nth(i).click({ timeout: 2000 }).catch(() => {})
+      const toClick = indices.filter((i) => i >= 0 && i < tileCount)
+      for (const i of toClick) {
+        await tiles.nth(i).click({ timeout: 2000 }).catch(() => {})
       }
-      log(`${roundLabel} Clicked ${indices.length} tile(s).`)
+      log(`${roundLabel} Clicked ${toClick.length} tile(s): [${toClick.join(",")}].`)
     }
     await page.waitForTimeout(800)
     const verifyBtn = challengeFrame.locator("#recaptcha-verify-button").first()
