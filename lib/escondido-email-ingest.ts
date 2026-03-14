@@ -113,22 +113,22 @@ export function parseInvoicePage(html: string, pageUrl: string): {
 
   // PDF / invoice link: often behind "View invoice" or "Download" button. Check link text first, then hrefs, then JS.
   let pdfUrl: string | null = null
-  const baseHost = (() => {
-    try {
-      return new URL(pageUrl).origin
-    } catch {
-      return ""
-    }
-  })()
 
-  // 1) Links whose text looks like "View invoice", "View PDF", "Download" — take the href (or follow if needed)
-  const viewInvoiceLinkRegex =
-    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>[\s\S]*?(?:view\s*invoice|view\s*pdf|download\s*pdf|download\s*bill|print\s*invoice|get\s*pdf)[\s\S]*?<\/a>/i
-  let m = html.match(viewInvoiceLinkRegex)
-  if (m && m[1]) {
-    const raw = m[1].trim()
-    if (raw && !raw.startsWith("javascript:")) {
-      pdfUrl = resolveUrl(raw, pageUrl)
+  // 1) Find any <a href="...">...</a> whose inner text (strip tags) contains "view invoice" / "view pdf" / "download"
+  const linkBlockRegex = /<a\s+([^>]*)>([\s\S]*?)<\/a>/gi
+  let linkMatch: RegExpExecArray | null
+  while ((linkMatch = linkBlockRegex.exec(html)) !== null) {
+    const attrs = linkMatch[1]!
+    const inner = linkMatch[2]!.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+    if (/view\s*invoice|view\s*pdf|download\s*pdf|download\s*bill|print\s*invoice|get\s*pdf/i.test(inner)) {
+      const hrefMatch = attrs.match(/href=["']([^"']+)["']/i)
+      if (hrefMatch && hrefMatch[1]) {
+        const raw = hrefMatch[1].trim()
+        if (raw && !raw.startsWith("javascript:")) {
+          pdfUrl = resolveUrl(raw, pageUrl)
+          break
+        }
+      }
     }
   }
 
@@ -259,63 +259,84 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
       let pageHtml = await res.text()
       let parsed = parseInvoicePage(pageHtml, invoiceUrl)
 
-      // If the "bill" is behind a button, the parser may have found a "View invoice" link that points to another page. Fetch it and get the PDF from there.
+      // Step 2: "View invoice" on the bill page opens the document. Follow that link and get the final document URL.
       const viewInvoiceUrl = parsed.pdfUrl
-      if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && (viewInvoiceUrl.includes(".aspx") || viewInvoiceUrl.includes("/invoice"))) {
+      if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf")) {
         try {
           const res2 = await fetch(viewInvoiceUrl, fetchOptions)
-          const pageHtml2 = await res2.text()
-          const parsed2 = parseInvoicePage(pageHtml2, viewInvoiceUrl)
-          if (parsed2.pdfUrl) parsed = { ...parsed, pdfUrl: parsed2.pdfUrl }
-          if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
+          const contentType = res2.headers.get("content-type") ?? ""
+          if (contentType.toLowerCase().includes("application/pdf")) {
+            parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
+          } else {
+            const pageHtml2 = await res2.text()
+            const parsed2 = parseInvoicePage(pageHtml2, viewInvoiceUrl)
+            if (parsed2.pdfUrl) parsed = { ...parsed, pdfUrl: parsed2.pdfUrl }
+            else parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
+            if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
+          }
         } catch {
-          // keep original parsed
+          if (viewInvoiceUrl) parsed = { ...parsed, pdfUrl: viewInvoiceUrl }
         }
       }
 
-      // Use parsed account if it matches a mapping; otherwise use default when only one property is mapped
       let accountNumber = (parsed.accountNumber || defaultAccount) ?? ""
-      let propertyId = accountToProperty.get(accountNumber) ?? defaultPropertyId
-      if (!propertyId && defaultPropertyId && defaultAccount) {
-        propertyId = defaultPropertyId
-        accountNumber = defaultAccount
-      }
-      if (!propertyId) {
-        results.push({ url: invoiceUrl, error: `No property mapped for account ${accountNumber || "unknown"}. Add mapping in Admin → Utility accounts.` })
-        continue
-      }
+      const propertyId = accountToProperty.get(accountNumber) ?? defaultPropertyId ?? null
       if (!accountNumber) accountNumber = defaultAccount ?? "unknown"
 
       const periodStart = parsed.periodStart || new Date().toISOString().slice(0, 10)
       const periodEnd = parsed.periodEnd || periodStart
 
-      const { data: bill, error: upsertError } = await supabase
-        .from("utility_provider_bills")
-        .upsert(
-          {
-            property_id: propertyId,
-            utility_key: UTILITY_KEY,
-            account_number: accountNumber,
-            billing_period_start: periodStart,
-            billing_period_end: periodEnd,
-            amount_due: parsed.amountDue >= 0 ? parsed.amountDue : 0,
-            due_date: parsed.dueDate,
-            pdf_url: parsed.pdfUrl,
-            external_id: invoiceUrl.slice(0, 500),
-            invoice_url: invoiceUrl,
-            source_email_id: emailId,
-            fetched_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "property_id,utility_key,billing_period_start", ignoreDuplicates: false }
-        )
-        .select("id")
-        .single()
+      const billRow = {
+        property_id: propertyId,
+        utility_key: UTILITY_KEY,
+        account_number: accountNumber,
+        billing_period_start: periodStart,
+        billing_period_end: periodEnd,
+        amount_due: parsed.amountDue >= 0 ? parsed.amountDue : 0,
+        due_date: parsed.dueDate,
+        pdf_url: parsed.pdfUrl,
+        external_id: invoiceUrl.slice(0, 500),
+        invoice_url: invoiceUrl,
+        source_email_id: emailId,
+        fetched_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+
+      let bill: { id: string } | null = null
+      let upsertError: { message: string } | null = null
+
+      if (propertyId) {
+        const out = await supabase
+          .from("utility_provider_bills")
+          .upsert(billRow, { onConflict: "property_id,utility_key,billing_period_start", ignoreDuplicates: false })
+          .select("id")
+          .single()
+        upsertError = out.error
+        bill = out.data
+      } else {
+        const { data: existing } = await supabase
+          .from("utility_provider_bills")
+          .select("id")
+          .eq("utility_key", UTILITY_KEY)
+          .eq("account_number", accountNumber)
+          .eq("billing_period_start", periodStart)
+          .is("property_id", null)
+          .maybeSingle()
+        if (existing) {
+          const out = await supabase.from("utility_provider_bills").update(billRow).eq("id", existing.id).select("id").single()
+          upsertError = out.error
+          bill = out.data
+        } else {
+          const out = await supabase.from("utility_provider_bills").insert(billRow).select("id").single()
+          upsertError = out.error
+          bill = out.data
+        }
+      }
 
       if (upsertError) {
         results.push({ url: invoiceUrl, error: upsertError.message })
       } else {
-        results.push({ url: invoiceUrl, bill_id: bill?.id })
+        results.push({ url: invoiceUrl, bill_id: bill?.id ?? undefined })
       }
     } catch (err) {
       results.push({ url: invoiceUrl, error: err instanceof Error ? err.message : String(err) })

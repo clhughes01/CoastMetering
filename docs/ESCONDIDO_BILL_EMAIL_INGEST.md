@@ -14,6 +14,7 @@ Follow these steps in order. You’ll set environment variables in Vercel and (i
 2. Open the file `supabase/utility-bill-emails.sql` in this repo and copy its full contents.
 3. Paste into the SQL Editor and click **Run**.
 4. This creates the `utility_bill_emails` table and adds `source_email_id` and `invoice_url` to `utility_provider_bills`. You only need to do this once.
+5. **Optional but recommended:** Run `supabase/migrations/utility_provider_bills_nullable_property.sql` in the SQL Editor so bills can be created even when no property is mapped yet (you can assign the property later).
 
 ### Step 2: Decide which inbox the cron will use
 
