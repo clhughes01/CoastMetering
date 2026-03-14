@@ -13,13 +13,20 @@ const IMAP_TLS = process.env.ESCONDIDO_IMAP_TLS !== "false"
 const MAX_EMAILS_PER_RUN = parseInt(process.env.ESCONDIDO_IMAP_MAX_EMAILS ?? "20", 10)
 const DAYS_BACK = parseInt(process.env.ESCONDIDO_IMAP_DAYS_BACK ?? "7", 10)
 
-/** Sender addresses we consider Escondido/Invoice Cloud bill notifications */
+/** Comma-separated addresses that may forward bill emails (e.g. coastmetering@gmail.com) */
+const ALLOWED_FORWARDERS = (process.env.ESCONDIDO_IMAP_ALLOWED_FORWARDERS ?? "coastmetering@gmail.com")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
+
+/** Sender addresses we consider Escondido/Invoice Cloud bill notifications (or allowed forwarders) */
 function isBillSender(from: string): boolean {
   const lower = from.toLowerCase()
+  if (ALLOWED_FORWARDERS.some((allowed) => lower.includes(allowed))) return true
   return (
     lower.includes("invoicecloud") ||
     lower.includes("escondido") ||
-    lower.includes("noreply@") && (lower.includes("bill") || lower.includes("invoice") || lower.includes("water"))
+    (lower.includes("noreply@") && (lower.includes("bill") || lower.includes("invoice") || lower.includes("water")))
   )
 }
 

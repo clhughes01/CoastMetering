@@ -17,7 +17,7 @@ Follow these steps in order. You’ll set environment variables in Vercel and (i
 
 ### Step 2: Decide which inbox the cron will use
 
-The daily cron logs into **one** email account via IMAP and looks for Escondido/Invoice Cloud bill emails there. The inbox can receive other mail too — the cron only processes messages whose **From** address looks like a bill sender (e.g. contains `invoicecloud`, `escondido`, or a noreply address with “bill”/“invoice”/“water”). All other emails are skipped. Choose one:
+The daily cron logs into **one** email account via IMAP and looks for Escondido/Invoice Cloud bill emails there. The inbox can receive other mail too — the cron only processes messages whose **From** address looks like a bill sender (e.g. contains `invoicecloud`, `escondido`, or a noreply address with “bill”/“invoice”/“water”). Only emails that actually contain **invoice links** in the body are stored and turned into bills; all others are skipped. Forwarded emails (e.g. from `coastmetering@gmail.com`) are accepted by default; add more via `ESCONDIDO_IMAP_ALLOWED_FORWARDERS`. Choose one:
 
 - **Option A:** Use the same Gmail (or other) inbox that already receives the bill notifications. No forwarding needed.
 - **Option B:** Create a dedicated Gmail (e.g. `yourcompany.bills@gmail.com`) and in your main inbox set up **Gmail → Settings → Forwarding** so that emails from Invoice Cloud / Escondido are forwarded to this address. Then the cron will use this dedicated inbox.
@@ -248,6 +248,6 @@ curl -X POST "https://your-app.vercel.app/api/ingest/escondido-bill-email" \
 | INGEST_ESCONDIDO_EMAIL_SECRET | For POST ingest | Bearer token for `POST /api/ingest/escondido-bill-email`. |
 | NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY | Yes | Used to insert emails and bills. |
 
-Optional for cron: `ESCONDIDO_IMAP_PORT` (993), `ESCONDIDO_IMAP_TLS` (true), `ESCONDIDO_IMAP_MAX_EMAILS` (20), `ESCONDIDO_IMAP_DAYS_BACK` (7).
+Optional for cron: `ESCONDIDO_IMAP_PORT` (993), `ESCONDIDO_IMAP_TLS` (true), `ESCONDIDO_IMAP_MAX_EMAILS` (20), `ESCONDIDO_IMAP_DAYS_BACK` (7). **ESCONDIDO_IMAP_ALLOWED_FORWARDERS** — Comma-separated list of sender addresses to treat as bill emails (e.g. when bills are forwarded). Default includes `coastmetering@gmail.com`.
 
 Property → account mapping must exist in `property_utility_accounts` (utility_key = `escondido_water`) so bills can be attached to the correct property. If only one account is mapped, that property is used for all ingested bills from the email.
