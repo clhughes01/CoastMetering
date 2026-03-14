@@ -111,22 +111,80 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   const dueLabelMatch = html.match(/due\s*date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
   if (dueLabelMatch) dueDate = normalizeDate(dueLabelMatch[1]!)
 
-  // PDF / download link: .pdf href, download/GetPdf/pdf.aspx, or link/button text "download" / "pdf" / "print"
+  // PDF / invoice link: often behind "View invoice" or "Download" button. Check link text first, then hrefs, then JS.
   let pdfUrl: string | null = null
-  const pdfPatterns = [
-    /<a\s+[^>]*href=["']([^"']*\.pdf[^"']*)["']/i,
-    /href=["']([^"']*(?:\.pdf|download\.aspx|pdf\.aspx|getpdf|viewpdf|downloadpdf)[^"']*)["']/i,
-    /href=["']([^"']*(?:download|pdf)[^"']*)["']/i,
-    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(?:[^<]*(?:download|print|pdf)[^<]*)<\/a>/i,
-  ]
-  for (const re of pdfPatterns) {
-    const m = html.match(re)
-    if (m && m[1]) {
-      const raw = m[1].trim()
-      if (raw && !raw.startsWith("javascript:")) {
-        pdfUrl = resolveUrl(raw, pageUrl)
-        break
+  const baseHost = (() => {
+    try {
+      return new URL(pageUrl).origin
+    } catch {
+      return ""
+    }
+  })()
+
+  // 1) Links whose text looks like "View invoice", "View PDF", "Download" — take the href (or follow if needed)
+  const viewInvoiceLinkRegex =
+    /<a\s+[^>]*href=["']([^"']+)["'][^>]*>[\s\S]*?(?:view\s*invoice|view\s*pdf|download\s*pdf|download\s*bill|print\s*invoice|get\s*pdf)[\s\S]*?<\/a>/i
+  let m = html.match(viewInvoiceLinkRegex)
+  if (m && m[1]) {
+    const raw = m[1].trim()
+    if (raw && !raw.startsWith("javascript:")) {
+      pdfUrl = resolveUrl(raw, pageUrl)
+    }
+  }
+
+  // 2) Same idea: href first, then look for link text (order reversed for "href contains pdf/download")
+  if (!pdfUrl) {
+    const pdfHrefPatterns = [
+      /<a\s+[^>]*href=["']([^"']*\.pdf[^"']*)["']/i,
+      /href=["']([^"']*(?:\.pdf|download\.aspx|pdf\.aspx|getpdf|viewpdf|downloadpdf|invoice\.aspx)[^"']*)["']/i,
+      /href=["']([^"']*(?:download|pdf|invoice)[^"']*)["']/i,
+    ]
+    for (const re of pdfHrefPatterns) {
+      const match = html.match(re)
+      if (match && match[1]) {
+        const raw = match[1].trim()
+        if (raw && !raw.startsWith("javascript:")) {
+          pdfUrl = resolveUrl(raw, pageUrl)
+          break
+        }
       }
+    }
+  }
+
+  // 3) Button/link with onclick that opens a URL (e.g. window.open('...') or location.href='...')
+  if (!pdfUrl) {
+    const jsUrlPatterns = [
+      /(?:window\.open|location\.href|location\s*=\s*)\s*\(\s*["']([^"']+)["']/i,
+      /(?:window\.open|location\.href)\s*\(\s*["']([^"']+)["']/i,
+      /["'](https?:\/\/[^"']*(?:\.pdf|invoice|download)[^"']*)["']/i,
+    ]
+    for (const re of jsUrlPatterns) {
+      const match = html.match(re)
+      if (match && match[1]) {
+        const raw = match[1].trim()
+        if (raw && raw.startsWith("http") && raw.includes("invoicecloud")) {
+          pdfUrl = raw
+          break
+        }
+      }
+    }
+  }
+
+  // 4) data-url, data-href, data-pdf on buttons/links
+  if (!pdfUrl) {
+    const dataUrlMatch = html.match(/data-(?:pdf-)?(?:url|href)=["']([^"']+)["']/i)
+    if (dataUrlMatch && dataUrlMatch[1]) {
+      const raw = dataUrlMatch[1].trim()
+      if (raw && !raw.startsWith("javascript:")) pdfUrl = resolveUrl(raw, pageUrl)
+    }
+  }
+
+  // 5) Form action that looks like PDF/invoice/download
+  if (!pdfUrl) {
+    const formMatch = html.match(/<form[^>]*action=["']([^"']*(?:pdf|download|invoice)[^"']*)["']/i)
+    if (formMatch && formMatch[1]) {
+      const raw = formMatch[1].trim()
+      if (raw && !raw.startsWith("javascript:")) pdfUrl = resolveUrl(raw, pageUrl)
     }
   }
 
@@ -188,25 +246,45 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
   for (const row of accountRows || []) {
     accountToProperty.set(String(row.account_number).trim(), row.property_id)
   }
-  const defaultPropertyId = accountToProperty.size === 1 ? accountRows![0].property_id : null
-  const defaultAccount = accountToProperty.size === 1 ? accountRows![0].account_number : null
+  const defaultPropertyId = accountRows?.length === 1 ? accountRows![0].property_id : null
+  const defaultAccount = accountRows?.length === 1 ? accountRows![0].account_number : null
 
   const results: { url: string; bill_id?: string; error?: string }[] = []
 
+  const fetchOptions = { headers: { "User-Agent": "Mozilla/5.0 (compatible; CoastMetering/1.0)" } } as RequestInit
+
   for (const invoiceUrl of links) {
     try {
-      const res = await fetch(invoiceUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; CoastMetering/1.0)" },
-      })
-      const pageHtml = await res.text()
-      const parsed = parseInvoicePage(pageHtml, invoiceUrl)
+      let res = await fetch(invoiceUrl, fetchOptions)
+      let pageHtml = await res.text()
+      let parsed = parseInvoicePage(pageHtml, invoiceUrl)
 
-      const accountNumber = (parsed.accountNumber || defaultAccount) ?? ""
-      const propertyId = accountToProperty.get(accountNumber) || defaultPropertyId
+      // If the "bill" is behind a button, the parser may have found a "View invoice" link that points to another page. Fetch it and get the PDF from there.
+      const viewInvoiceUrl = parsed.pdfUrl
+      if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && (viewInvoiceUrl.includes(".aspx") || viewInvoiceUrl.includes("/invoice"))) {
+        try {
+          const res2 = await fetch(viewInvoiceUrl, fetchOptions)
+          const pageHtml2 = await res2.text()
+          const parsed2 = parseInvoicePage(pageHtml2, viewInvoiceUrl)
+          if (parsed2.pdfUrl) parsed = { ...parsed, pdfUrl: parsed2.pdfUrl }
+          if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
+        } catch {
+          // keep original parsed
+        }
+      }
+
+      // Use parsed account if it matches a mapping; otherwise use default when only one property is mapped
+      let accountNumber = (parsed.accountNumber || defaultAccount) ?? ""
+      let propertyId = accountToProperty.get(accountNumber) ?? defaultPropertyId
+      if (!propertyId && defaultPropertyId && defaultAccount) {
+        propertyId = defaultPropertyId
+        accountNumber = defaultAccount
+      }
       if (!propertyId) {
-        results.push({ url: invoiceUrl, error: `No property mapped for account ${accountNumber || "unknown"}` })
+        results.push({ url: invoiceUrl, error: `No property mapped for account ${accountNumber || "unknown"}. Add mapping in Admin → Utility accounts.` })
         continue
       }
+      if (!accountNumber) accountNumber = defaultAccount ?? "unknown"
 
       const periodStart = parsed.periodStart || new Date().toISOString().slice(0, 10)
       const periodEnd = parsed.periodEnd || periodStart
