@@ -245,7 +245,7 @@ async function solveRecaptchaV2With2Captcha(
   // Per 2Captcha limits: wait 10-20s for reCAPTCHA before first getTaskResult (avg solve ~30s)
   const INITIAL_WAIT_MS = 20000
   await new Promise((r) => setTimeout(r, INITIAL_WAIT_MS))
-  const maxPolls = 40
+  const maxPolls = 60
   for (let i = 0; i < maxPolls; i++) {
     const resultRes = await fetch(TWOCAPTCHA_RESULT, {
       method: "POST",
@@ -268,7 +268,7 @@ async function solveRecaptchaV2With2Captcha(
     }
     if (resultJson.errorId !== 0) {
       log(`2Captcha getTaskResult error: errorId=${resultJson.errorId} ${resultJson.errorCode ?? ""} ${resultJson.errorDescription ?? ""}`)
-      if (resultJson.errorId === 12) log("Captcha unsolvable; workers could not solve it (no charge).")
+      if (resultJson.errorId === 12) log("Captcha unsolvable (no charge). Next attempt will request a fresh solve.")
       return null
     }
     if (resultJson.status === "processing") {
@@ -314,7 +314,7 @@ async function solveRecaptchaV2EnterpriseWith2Captcha(
   }
   const taskId = createJson.taskId
   await new Promise((r) => setTimeout(r, 20000))
-  const maxPolls = 40
+  const maxPolls = 60
   for (let i = 0; i < maxPolls; i++) {
     const resultRes = await fetch(TWOCAPTCHA_RESULT, {
       method: "POST",
