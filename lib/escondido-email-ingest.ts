@@ -28,36 +28,120 @@ export type IngestResult = {
   error?: string
 }
 
-/** Extract the single primary "View invoice or pay now" link from the email. Returns at most one URL so we create one bill per email. */
+/** Parsed account information from the email body (under "Account information" etc.) and optional subject. Use as source of truth. */
+export function parseAccountInfoFromEmail(
+  html: string,
+  text: string,
+  subject?: string
+): {
+  accountNumber: string
+  amountDue: number
+  dueDate: string | null
+  invoiceNumber: string
+} {
+  const stripTags = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
+  const combined = (stripTags(html || "") + " " + (text || "") + " " + (subject || "")).replace(/\s+/g, " ")
+
+  let accountNumber = ""
+  let amountDue = 0
+  let dueDate: string | null = null
+  let invoiceNumber = ""
+
+  const normalizeDate = (s: string): string => {
+    const parts = s.replace(/\//g, "-").split("-")
+    if (parts.length !== 3) return s
+    const [a, b, c] = parts
+    const year = c!.length === 2 ? `20${c}` : c
+    const month = a!.length === 1 ? `0${a}` : a
+    const day = b!.length === 1 ? `0${b}` : b
+    return `${year}-${month}-${day}`
+  }
+
+  // Account number — prefer "Account #" / "Account number" (not "Invoice #"). Escondido uses 10-digit account numbers.
+  const accountPatterns = [
+    /Account\s*#\s*[:\s]*(\d{8,12})/i,
+    /Account\s*number\s*[:\s]*(\d{8,12})/i,
+    /Account\s*information[\s\S]{0,120}?Account\s*#?\s*[:\s]*(\d{8,12})/i,
+    /Account\s*information[\s\S]{0,120}?(\d{10})\b/,
+    /(?:Account\s*#?|Account\s*number)[\s\S]{0,60}?(\d{10})\b/,
+  ]
+  for (const re of accountPatterns) {
+    const m = combined.match(re)
+    if (m && m[1]) {
+      accountNumber = m[1].trim()
+      break
+    }
+  }
+
+  // Balance due / Amount due
+  const balanceMatch = combined.match(/(?:Balance\s*due|Amount\s*due|Total\s*due)[^$]*?\$[\s]*([\d,]+\.?\d*)/i)
+  if (balanceMatch && balanceMatch[1]) amountDue = parseFloat(balanceMatch[1].replace(/,/g, "")) || 0
+
+  // Due date
+  const dueMatch = combined.match(/(?:Due\s*date|Payment\s*due)[^0-9]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
+  if (dueMatch && dueMatch[1]) dueDate = normalizeDate(dueMatch[1])
+
+  // Invoice number (from subject "Invoice# 340244031417" or body) — optional
+  const invNumMatch = combined.match(/(?:Invoice\s*#?\s*)?(\d{9,12})\s*(?:Notification|$)/i) || combined.match(/(?:Invoice\s*#?|Invoice\s*number)\s*[:\s]*(\d{8,12})/i)
+  if (invNumMatch && invNumMatch[1]) invoiceNumber = invNumMatch[1].trim()
+
+  return { accountNumber, amountDue, dueDate, invoiceNumber }
+}
+
+/** Extract the primary "View invoice or pay now" link from the email. Prefer the most specific URL (longest path or with invoice/portal in path). */
 export function extractInvoiceLinks(html: string, text: string): string[] {
   const combined = html || text || ""
   const hrefRegex = /<a\s+([^>]*)href=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi
+  const candidates: { url: string; primary: boolean; pathLength: number }[] = []
   let m: RegExpExecArray | null
   while ((m = hrefRegex.exec(combined)) !== null) {
     const url = m[2]!.trim()
-    const beforeRight = (m[1]! + m[3]!).replace(/\s+/g, " ")
-    const inner = (m[4]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-    const linkText = (beforeRight + " " + inner).toLowerCase()
+    const inner = (m[4]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase()
     const isPrimary =
-      linkText.includes("view invoice") ||
-      linkText.includes("view invoice or pay") ||
-      linkText.includes("pay now") ||
-      (linkText.includes("invoice") && linkText.includes("pay"))
+      inner.includes("view invoice") ||
+      inner.includes("view invoice or pay") ||
+      inner.includes("pay now") ||
+      (inner.includes("invoice") && inner.includes("pay"))
     const isInvoiceCloud = url.includes(INVOICE_DOMAIN)
     const isDocLink = url.includes(DOCUMENT_DOMAIN)
-    if ((isInvoiceCloud || isDocLink) && (isPrimary || url.includes("invoice") || url.includes("view"))) {
-      if (isPrimary || isDocLink) return [url]
+    if (isInvoiceCloud || isDocLink) {
+      if (isPrimary || url.includes("invoice") || url.includes("view") || url.includes("portal")) {
+        try {
+          const pathLength = new URL(url).pathname.length
+          candidates.push({ url, primary: isPrimary || isDocLink, pathLength })
+        } catch {
+          candidates.push({ url, primary: isPrimary || isDocLink, pathLength: 0 })
+        }
+      }
     }
   }
-  const fallbackRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi
-  while ((m = fallbackRegex.exec(combined)) !== null) {
+  if (candidates.length === 0) {
+    const fallbackRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi
+    while ((m = fallbackRegex.exec(combined)) !== null) {
+      const url = m[1]!.trim()
+      if (url.includes(INVOICE_DOMAIN) && (url.includes("view") || url.includes("invoice") || url.includes("portal")))
+        return [url]
+      if (url.includes(DOCUMENT_DOMAIN)) return [url]
+    }
+    return []
+  }
+  // Prefer primary links, then longest path (most specific)
+  candidates.sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0) || b.pathLength - a.pathLength)
+  return [candidates[0]!.url]
+}
+
+/** Find any direct PDF or document URL in the email body (e.g. docs.onlinebiller.com or .pdf link). */
+export function extractDocumentLinkFromEmail(html: string, text: string): string | null {
+  const combined = html || text || ""
+  const hrefRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi
+  let m: RegExpExecArray | null
+  while ((m = hrefRegex.exec(combined)) !== null) {
     const url = m[1]!.trim()
-    if (url.includes(INVOICE_DOMAIN) && (url.includes("view") || url.includes("invoice") || url.includes("portal"))) {
-      return [url]
-    }
-    if (url.includes(DOCUMENT_DOMAIN)) return [url]
+    if (isValidDocumentUrl(url)) return url
   }
-  return []
+  const urlInText = combined.match(/(https?:\/\/[^\s<>"']*(?:onlinebiller\.com\/documents\.php[^\s<>"']*|\.pdf))/i)
+  if (urlInText && urlInText[1] && isValidDocumentUrl(urlInText[1])) return urlInText[1]
+  return null
 }
 
 /** Resolve href to absolute URL */
@@ -267,6 +351,18 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
 
   const links = extractInvoiceLinks(html, text)
   debugLog("extractInvoiceLinks", links.length, links[0] ?? "(none)")
+
+  const emailInfo = parseAccountInfoFromEmail(html, text, payload.subject)
+  debugLog("email account info", {
+    accountNumber: emailInfo.accountNumber || "(none)",
+    amountDue: emailInfo.amountDue,
+    dueDate: emailInfo.dueDate ?? "(none)",
+    invoiceNumber: emailInfo.invoiceNumber || "(none)",
+  })
+
+  const emailPdfUrl = extractDocumentLinkFromEmail(html, text)
+  if (emailPdfUrl) debugLog("document link in email", emailPdfUrl.slice(0, 100))
+
   if (links.length === 0) {
     return { ok: true, links_found: 0, results: [] }
   }
@@ -320,8 +416,9 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
   for (const invoiceUrl of links) {
     try {
       let res = await fetch(invoiceUrl, fetchOptions)
+      const finalInvoiceUrl = res.url || invoiceUrl
       let pageHtml = await res.text()
-      let parsed = parseInvoicePage(pageHtml, invoiceUrl)
+      let parsed = parseInvoicePage(pageHtml, finalInvoiceUrl)
       debugLog("summary page parsed", {
         accountNumber: parsed.accountNumber || "(none)",
         amountDue: parsed.amountDue,
@@ -330,9 +427,16 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
         viewInvoiceUrl: parsed.pdfUrl?.slice(0, 100) ?? "(none)",
       })
 
-      // Step 2: From the summary page, "View Invoice" opens the actual bill. Follow that link and use the final URL only if it's the real bill (onlinebiller.com or PDF). Never use compliance/feed.
+      // Prefer account info from the email (source of truth); fill in from page only when missing
+      if (emailInfo.accountNumber) parsed = { ...parsed, accountNumber: emailInfo.accountNumber }
+      if (emailInfo.amountDue > 0) parsed = { ...parsed, amountDue: emailInfo.amountDue }
+      if (emailInfo.dueDate) parsed = { ...parsed, dueDate: emailInfo.dueDate }
+      if (emailPdfUrl) parsed = { ...parsed, pdfUrl: emailPdfUrl }
+      debugLog("after email override", { accountNumber: parsed.accountNumber || "(none)", amountDue: parsed.amountDue, dueDate: parsed.dueDate ?? "(none)", pdfUrl: parsed.pdfUrl?.slice(0, 80) ?? "(none)" })
+
+      // Step 2: From the summary page, "View Invoice" opens the actual bill. Follow that link only if we don't already have a PDF URL from the email.
       const viewInvoiceUrl = parsed.pdfUrl
-      if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && !isValidDocumentUrl(viewInvoiceUrl)) {
+      if (viewInvoiceUrl && !emailPdfUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && !isValidDocumentUrl(viewInvoiceUrl)) {
         debugLog("following View Invoice link", viewInvoiceUrl.slice(0, 120))
         try {
           const res2 = await fetch(viewInvoiceUrl, { ...fetchOptions, redirect: "follow" })
