@@ -51,12 +51,12 @@ If the inbox is **Gmail** and you have 2-Step Verification on:
 | **NEXT_PUBLIC_SUPABASE_URL** | Supabase → Project Settings → API → Project URL. |
 | **SUPABASE_SERVICE_ROLE_KEY** | Supabase → Project Settings → API → `service_role` (secret) key. |
 
-Optional: `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_MAX_EMAILS`, `ESCONDIDO_IMAP_DAYS_BACK`, `ESCONDIDO_IMAP_ALLOWED_FORWARDERS` — the script uses defaults if not set.
+Optional: `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_MAX_EMAILS` (default **200**; increase for many properties), `ESCONDIDO_IMAP_DAYS_BACK`, `ESCONDIDO_IMAP_ALLOWED_FORWARDERS` — the script uses defaults if not set.
 
 ### Step 5: Run the workflows
 
 - **Email ingest:** The workflow **Ingest Escondido bill emails** runs **daily at 12:00 UTC** (see `.github/workflows/ingest-escondido-emails.yml`). Manual run: **Actions** → **Ingest Escondido bill emails** → **Run workflow**.
-- **PDF URLs:** The workflow **Fetch Escondido bill PDF URLs** runs automatically **after** the email ingest completes (see `.github/workflows/fetch-escondido-bill-pdfs.yml`). It opens each new bill's `invoice_url`, clicks through to "View Invoice", and saves that URL as `pdf_url`. You can also run it manually from **Actions** → **Fetch Escondido bill PDF URLs**.
+- **PDF storage:** The workflow **Fetch Escondido bill PDF URLs** runs automatically **after** the email ingest completes (see `.github/workflows/fetch-escondido-bill-pdfs.yml`). For each bill with `invoice_url` but no `pdf_url`, it opens the invoice page, finds "View Invoice", **downloads the PDF**, uploads it to Supabase Storage (bucket `utility-bill-pdfs`), and sets `pdf_url` to the stored file's public URL so the bill remains available even if the provider link expires. You can also run it manually from **Actions** → **Fetch Escondido bill PDF URLs**.
 
 ### Step 6: Run locally and watch debug output
 
@@ -75,7 +75,9 @@ To see what the ingest parsed from the email:
 ESCONDIDO_PDF_DEBUG=1 npm run fetch-escondido-bill-pdfs
 ```
 
-Requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. Playwright will open each invoice page and save the "View Invoice" URL to `pdf_url`.
+Requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. Playwright opens each invoice page, downloads the PDF from "View Invoice", uploads it to Supabase Storage, and sets `pdf_url` to the stored file URL. Optional: `ESCONDIDO_PDF_DELAY_MS` (default 1000) adds a delay between bills to avoid rate limits when processing many.
+
+**Scaling:** Both workflows are designed for many emails/bills. The email ingest processes up to **200** emails per run by default (`ESCONDIDO_IMAP_MAX_EMAILS`); increase it if you expect more. The PDF workflow processes **all** bills that have `invoice_url` and no `pdf_url` (no limit), with a 1-second delay between bills in CI to be gentle on the provider.
 
 ---
 

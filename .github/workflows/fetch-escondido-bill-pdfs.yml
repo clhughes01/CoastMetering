@@ -1,5 +1,6 @@
-# Runs after "Ingest Escondido bill emails" completes. Opens each new bill's invoice_url,
-# finds the "View Invoice" link, and saves that URL as pdf_url in the database.
+# Runs after "Ingest Escondido bill emails" completes. For each bill with invoice_url but no pdf_url,
+# opens the invoice page, finds "View Invoice", downloads the PDF, uploads to Supabase Storage,
+# and sets pdf_url to the stored file URL (so links don't expire).
 name: Fetch Escondido bill PDF URLs
 on:
   workflow_run:
@@ -28,6 +29,7 @@ jobs:
         env:
           ESCONDIDO_PDF_DEBUG: "1"
           DEBUG_OUTPUT_FILE: "${{ github.workspace }}/escondido-pdf-debug.log"
+          ESCONDIDO_PDF_DELAY_MS: "1000"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: npx tsx scripts/fetch-escondido-bill-pdf-urls.ts

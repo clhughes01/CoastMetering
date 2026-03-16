@@ -26,7 +26,7 @@ const IMAP_USER = process.env.ESCONDIDO_IMAP_USER?.trim()
 const IMAP_PASSWORD = process.env.ESCONDIDO_IMAP_PASSWORD?.trim()
 const IMAP_PORT = parseInt(process.env.ESCONDIDO_IMAP_PORT ?? "993", 10)
 const IMAP_TLS = process.env.ESCONDIDO_IMAP_TLS !== "false"
-const MAX_EMAILS_PER_RUN = parseInt(process.env.ESCONDIDO_IMAP_MAX_EMAILS ?? "50", 10)
+const MAX_EMAILS_PER_RUN = parseInt(process.env.ESCONDIDO_IMAP_MAX_EMAILS ?? "200", 10)
 const DAYS_BACK = parseInt(process.env.ESCONDIDO_IMAP_DAYS_BACK ?? "7", 10)
 
 const ALLOWED_FORWARDERS = (process.env.ESCONDIDO_IMAP_ALLOWED_FORWARDERS ?? "coastmetering@gmail.com")

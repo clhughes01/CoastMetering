@@ -1,0 +1,5 @@
+-- Storage bucket for utility bill PDFs (Escondido etc.).
+-- The Fetch Escondido bill PDF URLs script creates this bucket automatically via the Storage API
+-- if it does not exist (using the service role key). No need to run this manually unless you
+-- want to pre-create the bucket or adjust settings in the Dashboard.
+-- Bucket name: utility-bill-pdfs (public, 10 MB file size limit per file).
