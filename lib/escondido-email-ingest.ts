@@ -28,7 +28,34 @@ export type IngestResult = {
   error?: string
 }
 
-/** Parsed account information from the email body (under "Account Information" etc.) and subject. Use as source of truth. */
+/** Extract only the "Account Information" section from the email so we never use values from footer/links/tracking. */
+function getAccountInformationBlock(html: string, text: string): string {
+  const rawHtml = html || ""
+  const plainText = text || ""
+  const stripTags = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
+  const sections: string[] = []
+
+  // Find "Account Information" in HTML and take the next ~1200 chars (one table or block)
+  const accountInfoLabel = /Account\s*Information/i
+  const htmlIdx = rawHtml.search(accountInfoLabel)
+  if (htmlIdx >= 0) {
+    let chunk = rawHtml.slice(htmlIdx, htmlIdx + 1200)
+    const tableEnd = chunk.indexOf("</table>")
+    if (tableEnd >= 0) chunk = chunk.slice(0, tableEnd + "</table>".length)
+    sections.push(chunk)
+    sections.push(stripTags(chunk))
+  }
+
+  // Same in plain text
+  const textIdx = plainText.search(accountInfoLabel)
+  if (textIdx >= 0) {
+    sections.push(plainText.slice(textIdx, textIdx + 600))
+  }
+
+  return sections.length ? sections.join(" ").replace(/\s+/g, " ") : ""
+}
+
+/** Parsed account information from the email. Values are taken ONLY from the "Account Information" section to avoid wrong data from elsewhere. */
 export function parseAccountInfoFromEmail(
   html: string,
   text: string,
@@ -39,11 +66,8 @@ export function parseAccountInfoFromEmail(
   dueDate: string | null
   invoiceNumber: string
 } {
-  const stripTags = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
-  const rawHtml = html || ""
-  const plainText = text || ""
   const subj = subject || ""
-  const combined = (stripTags(rawHtml) + " " + plainText + " " + subj).replace(/\s+/g, " ")
+  const block = getAccountInformationBlock(html, text)
 
   let accountNumber = ""
   let amountDue = 0
@@ -60,58 +84,42 @@ export function parseAccountInfoFromEmail(
     return `${year}-${month}-${day}`
   }
 
-  // Account number — 10-digit Escondido account. Match "Account Number:" or "Account #" then digits. Try both HTML (with tags between label and value) and plain.
-  const accountPatterns = [
-    /Account\s*Number\s*:?\s*[\s<>\/\w"]*?(\d{10})\b/i,
-    /Account\s*#\s*:?\s*[\s<>\/\w"]*?(\d{10})\b/i,
-    /Account\s*number\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i,
-    /Account\s*information[\s\S]{0,150}?(\d{10})\b/i,
-    /Account\s*#\s*[:\s]*(\d{8,12})/i,
-    /Account\s*number\s*[:\s]*(\d{8,12})/i,
-    /(?:Account\s*#?|Account\s*number)[\s\S]{0,80}?(\d{10})\b/i,
-  ]
-  for (const re of accountPatterns) {
-    const m = (rawHtml + " " + combined).match(re)
-    if (m && m[1]) {
-      accountNumber = m[1].trim()
-      break
-    }
+  // Parse only within the Account Information block. If block is empty, we return empty values (no guessing).
+  if (!block) {
+    // Invoice number often appears in subject (e.g. "Invoice# 340244031417"); still allow that
+    const invInSubj = subj.match(/Invoice\s*#?\s*(\d{9,12})/i)
+    if (invInSubj?.[1]) invoiceNumber = invInSubj[1].trim()
+    return { accountNumber, amountDue, dueDate, invoiceNumber }
   }
 
-  // Balance due — look for label then $ amount (allow HTML between)
-  const balancePatterns = [
-    /Balance\s*Due\s*:?\s*[\s<>\/\w"]*?\$[\s]*([\d,]+\.?\d*)/i,
-    /Amount\s*due\s*:?\s*[^$]{0,50}?\$[\s]*([\d,]+\.?\d*)/i,
-    /(?:Balance\s*due|Amount\s*due|Total\s*due)\s*:?\s*[^$]{0,80}?\$[\s]*([\d,]+\.?\d*)/i,
-  ]
-  for (const re of balancePatterns) {
-    const m = (rawHtml + " " + combined).match(re)
-    if (m && m[1]) {
-      const val = parseFloat(m[1].replace(/,/g, ""))
-      if (val > 0) {
-        amountDue = val
-        break
-      }
-    }
+  // Account Number — label "Account Number" or "Account #" then value (allow HTML between). Escondido uses 10-digit.
+  const accountM =
+    block.match(/Account\s*Number\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i) ||
+    block.match(/Account\s*#\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i)
+  if (accountM?.[1]) accountNumber = accountM[1].trim()
+
+  // Invoice Number — label then value (only in block)
+  const invM =
+    block.match(/Invoice\s*Number\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i) ||
+    block.match(/Invoice\s*#\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i)
+  if (invM?.[1]) invoiceNumber = invM[1].trim()
+  if (!invoiceNumber && subj) {
+    const invInSubj = subj.match(/Invoice\s*#?\s*(\d{9,12})/i)
+    if (invInSubj?.[1]) invoiceNumber = invInSubj[1].trim()
   }
 
-  // Due date — "Invoice Due Date:" or "Due date" then date
-  const duePatterns = [
-    /Invoice\s*Due\s*Date\s*:?\s*[\s<>\/\w"]*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-    /Due\s*date\s*:?\s*[\s<>\/\w"]*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-    /Payment\s*due\s*[^0-9]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-  ]
-  for (const re of duePatterns) {
-    const m = (rawHtml + " " + combined).match(re)
-    if (m && m[1]) {
-      dueDate = normalizeDate(m[1])
-      break
-    }
-  }
+  // Due date — "Invoice Due Date" or "Due Date" then date (only in block)
+  const dueM =
+    block.match(/Invoice\s*Due\s*Date\s*:?\s*[\s<>\/\w"]*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i) ||
+    block.match(/Due\s*Date\s*:?\s*[\s<>\/\w"]*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
+  if (dueM?.[1]) dueDate = normalizeDate(dueM[1])
 
-  // Invoice number (from subject "Invoice# 340244031417" or body) — optional
-  const invNumMatch = (subj + " " + combined).match(/Invoice\s*#?\s*(\d{9,12})/i) || combined.match(/Invoice\s*Number\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i)
-  if (invNumMatch && invNumMatch[1]) invoiceNumber = invNumMatch[1].trim()
+  // Balance Due — label then $ amount (only in block)
+  const balanceM = block.match(/Balance\s*Due\s*:?\s*[\s<>\/\w"]*?\$[\s]*([\d,]+\.?\d*)/i)
+  if (balanceM?.[1]) {
+    const val = parseFloat(balanceM[1].replace(/,/g, ""))
+    if (Number.isFinite(val)) amountDue = val
+  }
 
   return { accountNumber, amountDue, dueDate, invoiceNumber }
 }
