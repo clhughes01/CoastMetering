@@ -1,0 +1,41 @@
+# Runs after "Ingest Escondido bill emails" completes. Opens each new bill's invoice_url,
+# finds the "View Invoice" link, and saves that URL as pdf_url in the database.
+name: Fetch Escondido bill PDF URLs
+on:
+  workflow_run:
+    workflows: ["Ingest Escondido bill emails"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  fetch-pdf-urls:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Fetch Escondido bill PDF URLs
+        env:
+          ESCONDIDO_PDF_DEBUG: "1"
+          DEBUG_OUTPUT_FILE: "${{ github.workspace }}/escondido-pdf-debug.log"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/fetch-escondido-bill-pdf-urls.ts
+
+      - name: Upload debug log
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: escondido-pdf-debug
+          path: escondido-pdf-debug.log

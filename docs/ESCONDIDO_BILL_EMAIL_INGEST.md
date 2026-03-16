@@ -2,7 +2,7 @@
 
 Ingest Escondido Water bill notification emails so bills are created from the **"View invoice or pay now"** link (no portal login or captcha). Each email and bill are stored and linked so you can use the same link later for payment.
 
-**The ingest runs via GitHub Actions** (daily schedule + manual trigger), not Vercel cron. It uses **IMAP + fetch**: connect to email → find “View invoice or pay now” link → **parse account info from the email body** (Account Number, Invoice Number, Invoice Due Date, Balance Due) → fetch the link and optionally follow “View Invoice” for the bill URL → save the bill. Account number, amount due, and due date are taken from the **email** when present; the fetched page is only used when the email doesn’t contain those fields.
+**The ingest runs via GitHub Actions** (daily schedule + manual trigger), not Vercel cron. **Two workflows:** (1) Email ingest uses **IMAP**: connect to email → find “View invoice or pay now” link → **parse account info from the email body** (Account Number, Invoice Number, Invoice Due Date, Balance Due) → fetch the link and optionally follow “View Invoice” for the bill URL → save one bill row with `invoice_url`. (2) **Fetch Escondido bill PDF URLs** runs after ingest: opens each bill's `invoice_url`, finds "View Invoice", saves that URL as `pdf_url`. Account number, amount due, and due date are taken from the **email** when present; the fetched page is only used when the email doesn’t contain those fields.
 
 ---
 
@@ -53,21 +53,29 @@ If the inbox is **Gmail** and you have 2-Step Verification on:
 
 Optional: `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_MAX_EMAILS`, `ESCONDIDO_IMAP_DAYS_BACK`, `ESCONDIDO_IMAP_ALLOWED_FORWARDERS` — the script uses defaults if not set.
 
-### Step 5: Run the workflow
+### Step 5: Run the workflows
 
-- **Schedule:** The workflow **Ingest Escondido bill emails** runs **daily at 12:00 UTC** (see `.github/workflows/ingest-escondido-emails.yml`).
-- **Manual run:** **Actions** → **Ingest Escondido bill emails** → **Run workflow**.
+- **Email ingest:** The workflow **Ingest Escondido bill emails** runs **daily at 12:00 UTC** (see `.github/workflows/ingest-escondido-emails.yml`). Manual run: **Actions** → **Ingest Escondido bill emails** → **Run workflow**.
+- **PDF URLs:** The workflow **Fetch Escondido bill PDF URLs** runs automatically **after** the email ingest completes (see `.github/workflows/fetch-escondido-bill-pdfs.yml`). It opens each new bill's `invoice_url`, clicks through to "View Invoice", and saves that URL as `pdf_url`. You can also run it manually from **Actions** → **Fetch Escondido bill PDF URLs**.
 
 ### Step 6: Run locally and watch debug output
 
-To see what the ingest parsed from the email and page:
+To see what the ingest parsed from the email:
 
 1. Set env in `.env`: `ESCONDIDO_IMAP_HOST`, `ESCONDIDO_IMAP_USER`, `ESCONDIDO_IMAP_PASSWORD`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
 2. Run with debug logging:
    ```bash
    ESCONDIDO_INGEST_DEBUG=1 npm run ingest-escondido-emails
    ```
-3. The log will show `email account info` (what was parsed from the email body), then `summary page parsed` (from the fetched link), then `after email override` (final values used for the bill). Use this to see why a value is missing or wrong.
+3. The log will show what was parsed from the email (account number, invoice number, due date, balance due, invoice_url). Use this to see why a value is missing or wrong.
+
+**To run the PDF URL step locally** (after bills exist with `invoice_url` but null `pdf_url`):
+
+```bash
+ESCONDIDO_PDF_DEBUG=1 npm run fetch-escondido-bill-pdfs
+```
+
+Requires `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. Playwright will open each invoice page and save the "View Invoice" URL to `pdf_url`.
 
 ---
 
