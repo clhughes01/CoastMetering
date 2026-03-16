@@ -106,18 +106,16 @@ export function parseInvoicePage(html: string, pageUrl: string): {
   let periodStart = ""
   let periodEnd = ""
 
-  // Account number: Escondido uses 10-digit account numbers (e.g. 3409446369). Require 8+ digits so we never capture years (2025) or short IDs.
+  // --- Summary page: labeled "Invoice number", "Account number", "Balance due", "Due date" (first page after View or pay invoice) ---
+  // Account number: Escondido uses 10-digit (e.g. 3409446369). Prefer label-based patterns so we don't grab random numbers.
   const accountPatterns = [
-    /ACCOUNT\s*NUMBER[^0-9]*(\d{8,12})/i,
-    /ACCOUNT\s*#?\s*[:\s]*(\d{8,12})/i,
-    /Account\s*#?\s*[:\s]*(?:<[^>]+>|\s)*(\d{8,12})/i,
+    /(?:Account\s*#?|ACCOUNT\s*NUMBER|Account\s*number)[\s:]*<\/[^>]+>\s*<[^>]+>[\s]*(\d{8,12})/i,
+    /(?:Account\s*#?|ACCOUNT\s*NUMBER)[^0-9]*(\d{8,12})/i,
     /Account\s*number\s*[:\s]*(?:<[^>]+>|\s)*(\d{8,12})/i,
     /account\s*#?\s*[:\s]*(\d{8,12})/i,
-    /account\s*number\s*[:\s]*(\d{8,12})/i,
     /customer\s*account\s*[:\s#]*(?:<[^>]+>|\s)*(\d{8,12})/i,
     /(?:account|acct)\s*no\.?\s*[:\s]*(\d{8,12})/i,
-    /\bAccount\s*#\s*[:\s]*(\d{8,12})/i,
-    /(?:^|[>\s])#\s*(\d{8,12})\b/,
+    /(?:Account\s*#?|account\s*#?|ACCOUNT\s*NUMBER)[\s\S]{0,120}?(\d{10})\b/,
   ]
   for (const re of accountPatterns) {
     const m = html.match(re)
@@ -130,26 +128,25 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     const urlAccount = pageUrl.match(/account(?:number|id)?[=:](\d{8,12})/i) || pageUrl.match(/[?&]id=(\d{8,12})/)
     if (urlAccount) accountNumber = urlAccount[1]!.trim()
   }
-  if (!accountNumber) {
-    const inTable = html.match(/Account\s*#?[^<]*<\/[^>]+>\s*<[^>]+>[^<]*(\d{8,12})/i)
-    if (inTable && inTable[1]) accountNumber = inTable[1].trim()
+
+  // Balance due / Amount due: use labeled value so we don't grab the first $ on the page (e.g. from header).
+  const balanceDueMatch = html.match(/(?:Balance\s*due|Amount\s*due|Balance\s*due)[^$]*?\$[\s]*([\d,]+\.?\d*)/i)
+  if (balanceDueMatch && balanceDueMatch[1]) {
+    amountDue = parseFloat(balanceDueMatch[1].replace(/,/g, "")) || 0
   }
-  if (!accountNumber) {
-    const nearAccount = html.match(/(?:Account\s*#?|account\s*#?|ACCOUNT\s*NUMBER)[\s\S]{0,200}?(\d{10})\b/)
-    if (nearAccount && nearAccount[1]) accountNumber = nearAccount[1].trim()
+  if (amountDue <= 0) {
+    const amountMatch = html.match(/\$[\s]*([\d,]+\.?\d*)/)
+    if (amountMatch) amountDue = parseFloat(amountMatch[1].replace(/,/g, "")) || 0
   }
 
-  const amountMatch = html.match(/\$[\d,]+\.?\d*/)
-  if (amountMatch) amountDue = parseFloat(amountMatch[0].replace(/[$,]/g, "")) || 0
-
-  const dateMatches = html.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g) || []
-  if (dateMatches.length >= 1) periodStart = normalizeDate(dateMatches[0]!)
-  if (dateMatches.length >= 2) periodEnd = normalizeDate(dateMatches[1]!)
-  if (dateMatches.length >= 3) dueDate = normalizeDate(dateMatches[2]!)
-  if (!periodEnd && periodStart) periodEnd = periodStart
-
-  const dueLabelMatch = html.match(/due\s*date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
+  // Due date: labeled "Due date" first
+  const dueLabelMatch = html.match(/(?:Due\s*date|Due\s*Date)[^0-9]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
   if (dueLabelMatch) dueDate = normalizeDate(dueLabelMatch[1]!)
+  const dateMatches = html.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g) || []
+  if (dateMatches.length >= 1 && !periodStart) periodStart = normalizeDate(dateMatches[0]!)
+  if (dateMatches.length >= 2 && !periodEnd) periodEnd = normalizeDate(dateMatches[1]!)
+  if (!dueDate && dateMatches.length >= 3) dueDate = normalizeDate(dateMatches[2]!)
+  if (!periodEnd && periodStart) periodEnd = periodStart
 
   // PDF / document link: On "Your Invoice" page the blue "View Invoice" link goes to the actual bill (often docs.onlinebiller.com).
   let pdfUrl: string | null = null
@@ -169,10 +166,11 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     }
   }
 
-  // 2) "View Invoice" link on the summary page — use only if href looks like portal (we'll follow it); never use compliance/feed
+  // 2) "View Invoice" link on the summary page — this is the button/link that opens the actual bill. Prefer exact text "View Invoice".
   if (!pdfUrl) {
     const linkBlockRegex = /<a\s+([^>]*)>([\s\S]*?)<\/a>/gi
     let linkMatch: RegExpExecArray | null
+    const candidates: { url: string; exact: boolean }[] = []
     while ((linkMatch = linkBlockRegex.exec(html)) !== null) {
       const attrs = linkMatch[1]!
       const inner = (linkMatch[2]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
@@ -182,12 +180,30 @@ export function parseInvoicePage(html: string, pageUrl: string): {
           const raw = hrefMatch[1].trim()
           if (raw && !raw.startsWith("javascript:")) {
             const resolved = resolveUrl(raw, pageUrl)
-            if (isValidDocumentUrl(resolved)) pdfUrl = resolved
-            else if (resolved.includes("invoicecloud.com") && !resolved.includes("compliance") && !resolved.includes("/feed")) pdfUrl = resolved
-            break
+            if (isValidDocumentUrl(resolved)) {
+              pdfUrl = resolved
+              break
+            }
+            if (resolved.includes("invoicecloud.com") && !resolved.includes("compliance") && !resolved.includes("/feed") && !resolved.includes("invoicecloud.net")) {
+              candidates.push({ url: resolved, exact: /^view\s*invoice$/i.test(inner.trim()) })
+            }
           }
         }
       }
+    }
+    if (!pdfUrl && candidates.length > 0) {
+      const exact = candidates.find((c) => c.exact)
+      pdfUrl = (exact || candidates[0])!.url
+    }
+  }
+  // 2b) Form with submit "View Invoice" — action may point to bill or portal
+  if (!pdfUrl) {
+    const formRegex = /<form[^>]*action=["']([^"']+)["'][^>]*>[\s\S]*?View\s*Invoice[\s\S]*?<\/form>/gi
+    const fm = formRegex.exec(html)
+    if (fm && fm[1]) {
+      const resolved = resolveUrl(fm[1].trim(), pageUrl)
+      if (isValidDocumentUrl(resolved)) pdfUrl = resolved
+      else if (resolved.includes("invoicecloud.com") && !resolved.includes("compliance") && !resolved.includes("/feed")) pdfUrl = resolved
     }
   }
 
@@ -306,27 +322,33 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
       let res = await fetch(invoiceUrl, fetchOptions)
       let pageHtml = await res.text()
       let parsed = parseInvoicePage(pageHtml, invoiceUrl)
-      debugLog("after first page parse", { accountNumber: parsed.accountNumber || "(none)", pdfUrl: parsed.pdfUrl?.slice(0, 100) ?? "(none)" })
+      debugLog("summary page parsed", {
+        accountNumber: parsed.accountNumber || "(none)",
+        amountDue: parsed.amountDue,
+        dueDate: parsed.dueDate ?? "(none)",
+        viewInvoiceLink: parsed.pdfUrl ? "yes" : "no",
+        viewInvoiceUrl: parsed.pdfUrl?.slice(0, 100) ?? "(none)",
+      })
 
-      // Step 2: "View invoice" on the summary page opens the document. Follow the link and use final URL only if it's the real bill (onlinebiller.com or PDF). Never use compliance/feed.
+      // Step 2: From the summary page, "View Invoice" opens the actual bill. Follow that link and use the final URL only if it's the real bill (onlinebiller.com or PDF). Never use compliance/feed.
       const viewInvoiceUrl = parsed.pdfUrl
       if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && !isValidDocumentUrl(viewInvoiceUrl)) {
         debugLog("following View Invoice link", viewInvoiceUrl.slice(0, 120))
         try {
-          const res2 = await fetch(viewInvoiceUrl, fetchOptions)
-          const contentType = res2.headers.get("content-type") ?? ""
+          const res2 = await fetch(viewInvoiceUrl, { ...fetchOptions, redirect: "follow" })
+          const contentType = (res2.headers.get("content-type") ?? "").toLowerCase()
           const finalUrl = res2.url || viewInvoiceUrl
-          debugLog("redirect final URL", finalUrl.slice(0, 120), "content-type", contentType.slice(0, 50))
-          if (!isValidDocumentUrl(finalUrl) && (finalUrl.includes("compliance.") || finalUrl.includes("/feed"))) {
+          debugLog("redirect final URL", finalUrl.slice(0, 120), "content-type", contentType.slice(0, 60))
+          if (!isValidDocumentUrl(finalUrl) && (finalUrl.includes("compliance.") || finalUrl.includes("/feed") || finalUrl.includes("invoicecloud.net"))) {
             debugLog("rejected redirect (compliance/feed)", finalUrl.slice(0, 100))
             parsed = { ...parsed, pdfUrl: null }
-          } else if (contentType.toLowerCase().includes("application/pdf")) {
+          } else if (contentType.includes("application/pdf")) {
             parsed = { ...parsed, pdfUrl: finalUrl }
           } else if (finalUrl.includes(DOCUMENT_DOMAIN) && isValidDocumentUrl(finalUrl)) {
             const pageHtml2 = await res2.text()
             const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
             parsed = { ...parsed, pdfUrl: finalUrl }
-            if (parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
+            if (parsed2.accountNumber && !parsed.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
             if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
             if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
           } else if (isValidDocumentUrl(finalUrl)) {
@@ -341,8 +363,9 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
             if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
             if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
           }
-        } catch {
-          parsed = { ...parsed, pdfUrl: isValidDocumentUrl(viewInvoiceUrl) ? viewInvoiceUrl : null }
+        } catch (e) {
+          debugLog("follow View Invoice failed", e instanceof Error ? e.message : String(e))
+          parsed = { ...parsed, pdfUrl: null }
         }
       }
 
@@ -406,8 +429,10 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
 
       if (upsertError) {
         results.push({ url: invoiceUrl, error: upsertError.message })
+        debugLog("bill upsert error", upsertError.message)
       } else {
         results.push({ url: invoiceUrl, bill_id: bill?.id ?? undefined })
+        debugLog("bill saved", { bill_id: bill?.id, account_number: accountNumber, amount_due: billRow.amount_due, due_date: billRow.due_date ?? null, pdf_url: billRow.pdf_url?.slice(0, 80) ?? null })
       }
     } catch (err) {
       results.push({ url: invoiceUrl, error: err instanceof Error ? err.message : String(err) })

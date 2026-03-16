@@ -46,13 +46,29 @@ function isBillSender(from: string): boolean {
 
 const logLines: string[] = []
 
-function log(...args: unknown[]) {
-  const line = args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ")
-  console.log(...args)
+function captureLine(line: string) {
   if (DEBUG_OUTPUT_FILE) logLines.push(`${new Date().toISOString()} ${line}`)
 }
 
+function log(...args: unknown[]) {
+  const line = args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ")
+  console.log(...args)
+  captureLine(line)
+}
+
+/** Patch console.log so [escondido-ingest] lines are also captured into the debug artifact */
+function patchConsoleForDebug() {
+  if (!DEBUG_OUTPUT_FILE) return
+  const orig = console.log
+  console.log = (...args: unknown[]) => {
+    const line = args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ")
+    if (line.startsWith("[escondido-ingest]")) captureLine(line)
+    orig.apply(console, args)
+  }
+}
+
 async function main() {
+  patchConsoleForDebug()
   log("run-escondido-email-ingest start")
   if (DEBUG) log("ESCONDIDO_INGEST_DEBUG=1 — watch debug enabled")
 
@@ -158,19 +174,29 @@ async function main() {
     const message = err instanceof Error ? err.message : String(err)
     log("IMAP error:", message)
     if (DEBUG && err instanceof Error && err.stack) log(err.stack)
+    writeDebugLog()
     process.exit(1)
   }
 
   log("Done. Processed:", processed.length, "emails, total bills created/updated:", totalBills)
   processed.forEach((p, i) => log(" ", i + 1, p.subject?.slice(0, 50), "bills:", p.bills, p.error ?? ""))
+}
 
-  if (DEBUG_OUTPUT_FILE && logLines.length > 0) {
-    fs.writeFileSync(DEBUG_OUTPUT_FILE, logLines.join("\n"), "utf8")
-    log("Wrote debug log to", DEBUG_OUTPUT_FILE)
+function writeDebugLog() {
+  if (!DEBUG_OUTPUT_FILE) return
+  try {
+    const body = logLines.length > 0 ? logLines.join("\n") : `${new Date().toISOString()} (no log lines captured)`
+    fs.writeFileSync(DEBUG_OUTPUT_FILE, body, "utf8")
+    console.log("Wrote debug log to", DEBUG_OUTPUT_FILE)
+  } catch (e) {
+    console.error("Failed to write debug log:", e)
   }
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+main()
+  .then(() => writeDebugLog())
+  .catch((err) => {
+    console.error(err)
+    writeDebugLog()
+    process.exit(1)
+  })
