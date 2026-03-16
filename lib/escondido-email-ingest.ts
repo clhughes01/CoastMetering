@@ -9,6 +9,8 @@ function debugLog(...args: unknown[]) {
   }
 }
 const INVOICE_DOMAIN = "invoicecloud.com"
+/** Link in the email body with text "View Invoice or Pay Now" points here; this is the URL Playwright must open. */
+const EMAIL_INVOICE_DOMAIN = "email.invoicecloud.net"
 const DOCUMENT_DOMAIN = "onlinebiller.com"
 
 export type EmailPayload = {
@@ -124,46 +126,46 @@ export function parseAccountInfoFromEmail(
   return { accountNumber, amountDue, dueDate, invoiceNumber }
 }
 
-/** Extract the primary "View invoice or pay now" link from the email. Prefer the most specific URL (longest path or with invoice/portal in path). */
+/** Extract the "View Invoice or Pay Now" link from the email. That blue link points to email.invoicecloud.net (the URL Playwright will open). */
 export function extractInvoiceLinks(html: string, text: string): string[] {
   const combined = html || text || ""
   const hrefRegex = /<a\s+([^>]*)href=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/a>/gi
-  const candidates: { url: string; primary: boolean; pathLength: number }[] = []
   let m: RegExpExecArray | null
+
+  // First: find the link whose text is "View Invoice or Pay Now" (or close). That href is the one we want (email.invoicecloud.net/c/...).
   while ((m = hrefRegex.exec(combined)) !== null) {
     const url = m[2]!.trim()
     const inner = (m[4]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase()
-    const isPrimary =
-      inner.includes("view invoice") ||
-      inner.includes("view invoice or pay") ||
-      inner.includes("pay now") ||
-      (inner.includes("invoice") && inner.includes("pay"))
-    const isInvoiceCloud = url.includes(INVOICE_DOMAIN)
-    const isDocLink = url.includes(DOCUMENT_DOMAIN)
-    if (isInvoiceCloud || isDocLink) {
-      if (isPrimary || url.includes("invoice") || url.includes("view") || url.includes("portal")) {
-        try {
-          const pathLength = new URL(url).pathname.length
-          candidates.push({ url, primary: isPrimary || isDocLink, pathLength })
-        } catch {
-          candidates.push({ url, primary: isPrimary || isDocLink, pathLength: 0 })
-        }
-      }
+    const isViewInvoiceOrPayNow =
+      inner.includes("view invoice or pay now") ||
+      (inner.includes("view invoice") && inner.includes("pay now")) ||
+      inner === "view invoice or pay now"
+    if (isViewInvoiceOrPayNow && url.includes(EMAIL_INVOICE_DOMAIN)) {
+      return [url]
     }
   }
-  if (candidates.length === 0) {
-    const fallbackRegex = /<a\s+[^>]*href=["']([^"']+)["']/gi
-    while ((m = fallbackRegex.exec(combined)) !== null) {
-      const url = m[1]!.trim()
-      if (url.includes(INVOICE_DOMAIN) && (url.includes("view") || url.includes("invoice") || url.includes("portal")))
-        return [url]
-      if (url.includes(DOCUMENT_DOMAIN)) return [url]
+
+  // Fallback: same text but any invoicecloud host (e.g. if they change to invoicecloud.com)
+  hrefRegex.lastIndex = 0
+  while ((m = hrefRegex.exec(combined)) !== null) {
+    const url = m[2]!.trim()
+    const inner = (m[4]! || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().toLowerCase()
+    const isViewInvoiceOrPayNow =
+      inner.includes("view invoice or pay now") ||
+      (inner.includes("view invoice") && inner.includes("pay now"))
+    if (isViewInvoiceOrPayNow && (url.includes(EMAIL_INVOICE_DOMAIN) || url.includes(INVOICE_DOMAIN))) {
+      return [url]
     }
-    return []
   }
-  // Prefer primary links, then longest path (most specific)
-  candidates.sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0) || b.pathLength - a.pathLength)
-  return [candidates[0]!.url]
+
+  // Last resort: any link from email.invoicecloud.net (the email redirect domain)
+  hrefRegex.lastIndex = 0
+  while ((m = hrefRegex.exec(combined)) !== null) {
+    const url = m[2]!.trim()
+    if (url.includes(EMAIL_INVOICE_DOMAIN)) return [url]
+  }
+
+  return []
 }
 
 /** Find any direct PDF or document URL in the email body (e.g. docs.onlinebiller.com or .pdf link). */
