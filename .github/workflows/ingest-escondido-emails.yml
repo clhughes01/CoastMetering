@@ -1,9 +1,8 @@
 # Escondido bill email ingest — runs via GitHub Actions (no Vercel cron).
-# Connects to IMAP, fetches recent bill emails, extracts invoice links, parses pages, upserts bills.
+# IMAP → fetch email → parse account info from email body → fetch invoice link → follow View Invoice → save bill.
 name: Ingest Escondido bill emails
 on:
   schedule:
-    # Daily at 12:00 UTC
     - cron: "0 12 * * *"
   workflow_dispatch:
 
@@ -20,7 +19,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Run Escondido email ingest (with watch debug)
+      - name: Run Escondido email ingest
         env:
           ESCONDIDO_INGEST_DEBUG: "1"
           DEBUG_OUTPUT_FILE: "${{ github.workspace }}/escondido-ingest-debug.log"

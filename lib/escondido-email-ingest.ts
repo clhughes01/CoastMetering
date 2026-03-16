@@ -28,7 +28,7 @@ export type IngestResult = {
   error?: string
 }
 
-/** Parsed account information from the email body (under "Account information" etc.) and optional subject. Use as source of truth. */
+/** Parsed account information from the email body (under "Account Information" etc.) and subject. Use as source of truth. */
 export function parseAccountInfoFromEmail(
   html: string,
   text: string,
@@ -40,7 +40,10 @@ export function parseAccountInfoFromEmail(
   invoiceNumber: string
 } {
   const stripTags = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
-  const combined = (stripTags(html || "") + " " + (text || "") + " " + (subject || "")).replace(/\s+/g, " ")
+  const rawHtml = html || ""
+  const plainText = text || ""
+  const subj = subject || ""
+  const combined = (stripTags(rawHtml) + " " + plainText + " " + subj).replace(/\s+/g, " ")
 
   let accountNumber = ""
   let amountDue = 0
@@ -57,32 +60,57 @@ export function parseAccountInfoFromEmail(
     return `${year}-${month}-${day}`
   }
 
-  // Account number — prefer "Account #" / "Account number" (not "Invoice #"). Escondido uses 10-digit account numbers.
+  // Account number — 10-digit Escondido account. Match "Account Number:" or "Account #" then digits. Try both HTML (with tags between label and value) and plain.
   const accountPatterns = [
+    /Account\s*Number\s*:?\s*[\s<>\/\w"]*?(\d{10})\b/i,
+    /Account\s*#\s*:?\s*[\s<>\/\w"]*?(\d{10})\b/i,
+    /Account\s*number\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i,
+    /Account\s*information[\s\S]{0,150}?(\d{10})\b/i,
     /Account\s*#\s*[:\s]*(\d{8,12})/i,
     /Account\s*number\s*[:\s]*(\d{8,12})/i,
-    /Account\s*information[\s\S]{0,120}?Account\s*#?\s*[:\s]*(\d{8,12})/i,
-    /Account\s*information[\s\S]{0,120}?(\d{10})\b/,
-    /(?:Account\s*#?|Account\s*number)[\s\S]{0,60}?(\d{10})\b/,
+    /(?:Account\s*#?|Account\s*number)[\s\S]{0,80}?(\d{10})\b/i,
   ]
   for (const re of accountPatterns) {
-    const m = combined.match(re)
+    const m = (rawHtml + " " + combined).match(re)
     if (m && m[1]) {
       accountNumber = m[1].trim()
       break
     }
   }
 
-  // Balance due / Amount due
-  const balanceMatch = combined.match(/(?:Balance\s*due|Amount\s*due|Total\s*due)[^$]*?\$[\s]*([\d,]+\.?\d*)/i)
-  if (balanceMatch && balanceMatch[1]) amountDue = parseFloat(balanceMatch[1].replace(/,/g, "")) || 0
+  // Balance due — look for label then $ amount (allow HTML between)
+  const balancePatterns = [
+    /Balance\s*Due\s*:?\s*[\s<>\/\w"]*?\$[\s]*([\d,]+\.?\d*)/i,
+    /Amount\s*due\s*:?\s*[^$]{0,50}?\$[\s]*([\d,]+\.?\d*)/i,
+    /(?:Balance\s*due|Amount\s*due|Total\s*due)\s*:?\s*[^$]{0,80}?\$[\s]*([\d,]+\.?\d*)/i,
+  ]
+  for (const re of balancePatterns) {
+    const m = (rawHtml + " " + combined).match(re)
+    if (m && m[1]) {
+      const val = parseFloat(m[1].replace(/,/g, ""))
+      if (val > 0) {
+        amountDue = val
+        break
+      }
+    }
+  }
 
-  // Due date
-  const dueMatch = combined.match(/(?:Due\s*date|Payment\s*due)[^0-9]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i)
-  if (dueMatch && dueMatch[1]) dueDate = normalizeDate(dueMatch[1])
+  // Due date — "Invoice Due Date:" or "Due date" then date
+  const duePatterns = [
+    /Invoice\s*Due\s*Date\s*:?\s*[\s<>\/\w"]*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /Due\s*date\s*:?\s*[\s<>\/\w"]*?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+    /Payment\s*due\s*[^0-9]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  ]
+  for (const re of duePatterns) {
+    const m = (rawHtml + " " + combined).match(re)
+    if (m && m[1]) {
+      dueDate = normalizeDate(m[1])
+      break
+    }
+  }
 
   // Invoice number (from subject "Invoice# 340244031417" or body) — optional
-  const invNumMatch = combined.match(/(?:Invoice\s*#?\s*)?(\d{9,12})\s*(?:Notification|$)/i) || combined.match(/(?:Invoice\s*#?|Invoice\s*number)\s*[:\s]*(\d{8,12})/i)
+  const invNumMatch = (subj + " " + combined).match(/Invoice\s*#?\s*(\d{9,12})/i) || combined.match(/Invoice\s*Number\s*:?\s*[\s<>\/\w"]*?(\d{8,12})\b/i)
   if (invNumMatch && invNumMatch[1]) invoiceNumber = invNumMatch[1].trim()
 
   return { accountNumber, amountDue, dueDate, invoiceNumber }
@@ -360,13 +388,11 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
     invoiceNumber: emailInfo.invoiceNumber || "(none)",
   })
 
-  const emailPdfUrl = extractDocumentLinkFromEmail(html, text)
-  if (emailPdfUrl) debugLog("document link in email", emailPdfUrl.slice(0, 100))
-
   if (links.length === 0) {
     return { ok: true, links_found: 0, results: [] }
   }
 
+  const invoiceUrl = links[0]!
   const supabase = createSupabaseAdminClient()
 
   const messageId = payload.message_id ?? `ingest-${Date.now()}-${payload.subject ?? "no-subject"}`
@@ -409,138 +435,76 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
   const defaultPropertyId = accountRows?.length === 1 ? accountRows![0].property_id : null
   const defaultAccount = accountRows?.length === 1 ? accountRows![0].account_number : null
 
-  const results: { url: string; bill_id?: string; error?: string }[] = []
+  const accountNumber = emailInfo.accountNumber || (defaultAccount ?? "unknown")
+  const propertyId = accountToProperty.get(accountNumber) ?? defaultPropertyId ?? null
 
-  const fetchOptions = { headers: { "User-Agent": "Mozilla/5.0 (compatible; CoastMetering/1.0)" } } as RequestInit
+  const dueDate = emailInfo.dueDate || null
+  const periodEnd = dueDate || new Date().toISOString().slice(0, 10)
+  const periodStart = dueDate
+    ? (() => {
+        const [y, m] = periodEnd.split("-")
+        const d = new Date(parseInt(y!, 10), parseInt(m!, 10) - 2, 1)
+        return d.toISOString().slice(0, 10)
+      })()
+    : periodEnd
 
-  for (const invoiceUrl of links) {
-    try {
-      let res = await fetch(invoiceUrl, fetchOptions)
-      const finalInvoiceUrl = res.url || invoiceUrl
-      let pageHtml = await res.text()
-      let parsed = parseInvoicePage(pageHtml, finalInvoiceUrl)
-      debugLog("summary page parsed", {
-        accountNumber: parsed.accountNumber || "(none)",
-        amountDue: parsed.amountDue,
-        dueDate: parsed.dueDate ?? "(none)",
-        viewInvoiceLink: parsed.pdfUrl ? "yes" : "no",
-        viewInvoiceUrl: parsed.pdfUrl?.slice(0, 100) ?? "(none)",
-      })
+  const billRow = {
+    property_id: propertyId,
+    utility_key: UTILITY_KEY,
+    account_number: accountNumber,
+    invoice_number: emailInfo.invoiceNumber || null,
+    billing_period_start: periodStart,
+    billing_period_end: periodEnd,
+    amount_due: emailInfo.amountDue >= 0 ? emailInfo.amountDue : 0,
+    due_date: dueDate,
+    pdf_url: null,
+    external_id: invoiceUrl.slice(0, 500),
+    invoice_url: invoiceUrl,
+    source_email_id: emailId,
+    fetched_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
 
-      // Prefer account info from the email (source of truth); fill in from page only when missing
-      if (emailInfo.accountNumber) parsed = { ...parsed, accountNumber: emailInfo.accountNumber }
-      if (emailInfo.amountDue > 0) parsed = { ...parsed, amountDue: emailInfo.amountDue }
-      if (emailInfo.dueDate) parsed = { ...parsed, dueDate: emailInfo.dueDate }
-      if (emailPdfUrl) parsed = { ...parsed, pdfUrl: emailPdfUrl }
-      debugLog("after email override", { accountNumber: parsed.accountNumber || "(none)", amountDue: parsed.amountDue, dueDate: parsed.dueDate ?? "(none)", pdfUrl: parsed.pdfUrl?.slice(0, 80) ?? "(none)" })
+  debugLog("bill row (email only)", { account_number: accountNumber, invoice_number: billRow.invoice_number, due_date: dueDate, invoice_url: invoiceUrl.slice(0, 80) })
 
-      // Step 2: From the summary page, "View Invoice" opens the actual bill. Follow that link only if we don't already have a PDF URL from the email.
-      const viewInvoiceUrl = parsed.pdfUrl
-      if (viewInvoiceUrl && !emailPdfUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && !isValidDocumentUrl(viewInvoiceUrl)) {
-        debugLog("following View Invoice link", viewInvoiceUrl.slice(0, 120))
-        try {
-          const res2 = await fetch(viewInvoiceUrl, { ...fetchOptions, redirect: "follow" })
-          const contentType = (res2.headers.get("content-type") ?? "").toLowerCase()
-          const finalUrl = res2.url || viewInvoiceUrl
-          debugLog("redirect final URL", finalUrl.slice(0, 120), "content-type", contentType.slice(0, 60))
-          if (!isValidDocumentUrl(finalUrl) && (finalUrl.includes("compliance.") || finalUrl.includes("/feed") || finalUrl.includes("invoicecloud.net"))) {
-            debugLog("rejected redirect (compliance/feed)", finalUrl.slice(0, 100))
-            parsed = { ...parsed, pdfUrl: null }
-          } else if (contentType.includes("application/pdf")) {
-            parsed = { ...parsed, pdfUrl: finalUrl }
-          } else if (finalUrl.includes(DOCUMENT_DOMAIN) && isValidDocumentUrl(finalUrl)) {
-            const pageHtml2 = await res2.text()
-            const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
-            parsed = { ...parsed, pdfUrl: finalUrl }
-            if (parsed2.accountNumber && !parsed.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
-            if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
-            if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
-          } else if (isValidDocumentUrl(finalUrl)) {
-            parsed = { ...parsed, pdfUrl: finalUrl }
-          } else {
-            const pageHtml2 = await res2.text()
-            const parsed2 = parseInvoicePage(pageHtml2, finalUrl)
-            const candidateUrl = parsed2.pdfUrl && isValidDocumentUrl(parsed2.pdfUrl) ? parsed2.pdfUrl : (isValidDocumentUrl(finalUrl) ? finalUrl : null)
-            if (candidateUrl) parsed = { ...parsed, pdfUrl: candidateUrl }
-            else parsed = { ...parsed, pdfUrl: null }
-            if (!parsed.accountNumber && parsed2.accountNumber) parsed = { ...parsed, accountNumber: parsed2.accountNumber }
-            if (parsed2.amountDue > 0) parsed = { ...parsed, amountDue: parsed2.amountDue }
-            if (parsed2.dueDate) parsed = { ...parsed, dueDate: parsed2.dueDate }
-          }
-        } catch (e) {
-          debugLog("follow View Invoice failed", e instanceof Error ? e.message : String(e))
-          parsed = { ...parsed, pdfUrl: null }
-        }
-      }
+  let bill: { id: string } | null = null
+  let upsertError: { message: string } | null = null
 
-      let accountNumber = (parsed.accountNumber || defaultAccount) ?? ""
-      const propertyId = accountToProperty.get(accountNumber) ?? defaultPropertyId ?? null
-      if (!accountNumber) accountNumber = defaultAccount ?? "unknown"
-
-      const periodStart = parsed.periodStart || new Date().toISOString().slice(0, 10)
-      const periodEnd = parsed.periodEnd || periodStart
-
-      const billRow = {
-        property_id: propertyId,
-        utility_key: UTILITY_KEY,
-        account_number: accountNumber,
-        billing_period_start: periodStart,
-        billing_period_end: periodEnd,
-        amount_due: parsed.amountDue >= 0 ? parsed.amountDue : 0,
-        due_date: parsed.dueDate,
-        pdf_url: (() => {
-          const url = parsed.pdfUrl && isValidDocumentUrl(parsed.pdfUrl) ? parsed.pdfUrl : null
-          debugLog("bill pdf_url", url ? url.slice(0, 100) : "(null)")
-          return url
-        })(),
-        external_id: invoiceUrl.slice(0, 500),
-        invoice_url: invoiceUrl,
-        source_email_id: emailId,
-        fetched_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-
-      let bill: { id: string } | null = null
-      let upsertError: { message: string } | null = null
-
-      if (propertyId) {
-        const out = await supabase
-          .from("utility_provider_bills")
-          .upsert(billRow, { onConflict: "property_id,utility_key,billing_period_start", ignoreDuplicates: false })
-          .select("id")
-          .single()
-        upsertError = out.error
-        bill = out.data
-      } else {
-        const { data: existing } = await supabase
-          .from("utility_provider_bills")
-          .select("id")
-          .eq("utility_key", UTILITY_KEY)
-          .eq("account_number", accountNumber)
-          .eq("billing_period_start", periodStart)
-          .is("property_id", null)
-          .maybeSingle()
-        if (existing) {
-          const out = await supabase.from("utility_provider_bills").update(billRow).eq("id", existing.id).select("id").single()
-          upsertError = out.error
-          bill = out.data
-        } else {
-          const out = await supabase.from("utility_provider_bills").insert(billRow).select("id").single()
-          upsertError = out.error
-          bill = out.data
-        }
-      }
-
-      if (upsertError) {
-        results.push({ url: invoiceUrl, error: upsertError.message })
-        debugLog("bill upsert error", upsertError.message)
-      } else {
-        results.push({ url: invoiceUrl, bill_id: bill?.id ?? undefined })
-        debugLog("bill saved", { bill_id: bill?.id, account_number: accountNumber, amount_due: billRow.amount_due, due_date: billRow.due_date ?? null, pdf_url: billRow.pdf_url?.slice(0, 80) ?? null })
-      }
-    } catch (err) {
-      results.push({ url: invoiceUrl, error: err instanceof Error ? err.message : String(err) })
+  if (propertyId) {
+    const out = await supabase
+      .from("utility_provider_bills")
+      .upsert(billRow, { onConflict: "property_id,utility_key,billing_period_start", ignoreDuplicates: false })
+      .select("id")
+      .single()
+    upsertError = out.error
+    bill = out.data
+  } else {
+    const { data: existing } = await supabase
+      .from("utility_provider_bills")
+      .select("id")
+      .eq("utility_key", UTILITY_KEY)
+      .eq("account_number", accountNumber)
+      .eq("billing_period_start", periodStart)
+      .is("property_id", null)
+      .maybeSingle()
+    if (existing) {
+      const out = await supabase.from("utility_provider_bills").update(billRow).eq("id", existing.id).select("id").single()
+      upsertError = out.error
+      bill = out.data
+    } else {
+      const out = await supabase.from("utility_provider_bills").insert(billRow).select("id").single()
+      upsertError = out.error
+      bill = out.data
     }
+  }
+
+  const results: { url: string; bill_id?: string; error?: string }[] = []
+  if (upsertError) {
+    results.push({ url: invoiceUrl, error: upsertError.message })
+    debugLog("bill upsert error", upsertError.message)
+  } else {
+    results.push({ url: invoiceUrl, bill_id: bill?.id ?? undefined })
+    debugLog("bill saved", { bill_id: bill?.id, account_number: accountNumber })
   }
 
   return { ok: true, email_id: emailId, links_found: links.length, results }

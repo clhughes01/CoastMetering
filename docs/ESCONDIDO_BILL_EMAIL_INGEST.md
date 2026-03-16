@@ -2,7 +2,7 @@
 
 Ingest Escondido Water bill notification emails so bills are created from the **"View invoice or pay now"** link (no portal login or captcha). Each email and bill are stored and linked so you can use the same link later for payment.
 
-**The ingest runs via GitHub Actions** (daily schedule + manual trigger), not Vercel cron. This keeps workflow automation in one place and gives you a **watch debug log** on every run.
+**The ingest runs via GitHub Actions** (daily schedule + manual trigger), not Vercel cron. It uses **IMAP + fetch**: connect to email → find “View invoice or pay now” link → **parse account info from the email body** (Account Number, Invoice Number, Invoice Due Date, Balance Due) → fetch the link and optionally follow “View Invoice” for the bill URL → save the bill. Account number, amount due, and due date are taken from the **email** when present; the fetched page is only used when the email doesn’t contain those fields.
 
 ---
 
@@ -58,14 +58,16 @@ Optional: `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_MAX_EMAILS`, `ESCONDIDO_IMAP_DA
 - **Schedule:** The workflow **Ingest Escondido bill emails** runs **daily at 12:00 UTC** (see `.github/workflows/ingest-escondido-emails.yml`).
 - **Manual run:** **Actions** → **Ingest Escondido bill emails** → **Run workflow**.
 
-### Step 6: Watch debug output
+### Step 6: Run locally and watch debug output
 
-Every run uses **watch debug** so you can see what the ingest did:
+To see what the ingest parsed from the email and page:
 
-- **Actions** → open the latest **Ingest Escondido bill emails** run → **ingest** job. The step "Run Escondido email ingest (with watch debug)" prints link extraction, first-page parse (account, pdfUrl), "Following View Invoice link" and redirect final URL, any rejected compliance/feed URL, and the final `pdf_url` stored per bill.
-- **Artifact:** Download **escondido-ingest-debug** to get `escondido-ingest-debug.log` with the same lines (timestamped).
-
-Use this to confirm the correct account number and that `pdf_url` is a real document URL (e.g. `docs.onlinebiller.com`), not a feed or compliance URL.
+1. Set env in `.env`: `ESCONDIDO_IMAP_HOST`, `ESCONDIDO_IMAP_USER`, `ESCONDIDO_IMAP_PASSWORD`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+2. Run with debug logging:
+   ```bash
+   ESCONDIDO_INGEST_DEBUG=1 npm run ingest-escondido-emails
+   ```
+3. The log will show `email account info` (what was parsed from the email body), then `summary page parsed` (from the fetched link), then `after email override` (final values used for the bill). Use this to see why a value is missing or wrong.
 
 ---
 
