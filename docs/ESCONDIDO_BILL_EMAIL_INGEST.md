@@ -2,6 +2,8 @@
 
 Ingest Escondido Water bill notification emails so bills are created from the **"View invoice or pay now"** link (no portal login or captcha). Each email and bill are stored and linked so you can use the same link later for payment.
 
+**The ingest runs via GitHub Actions** (daily schedule + manual trigger), not Vercel cron. This keeps workflow automation in one place and gives you a **watch debug log** on every run.
+
 ---
 
 ## Step-by-step setup (fully automated)
@@ -16,12 +18,12 @@ Follow these steps in order. You’ll set environment variables in Vercel and (i
 4. This creates the `utility_bill_emails` table and adds `source_email_id` and `invoice_url` to `utility_provider_bills`. You only need to do this once.
 5. **Optional but recommended:** Run `supabase/migrations/utility_provider_bills_nullable_property.sql` in the SQL Editor so bills can be created even when no property is mapped yet (you can assign the property later).
 
-### Step 2: Decide which inbox the cron will use
+### Step 2: Decide which inbox the workflow will use
 
-The daily cron logs into **one** email account via IMAP and looks for Escondido/Invoice Cloud bill emails there. The inbox can receive other mail too — the cron only processes messages whose **From** address looks like a bill sender (e.g. contains `invoicecloud`, `escondido`, or a noreply address with “bill”/“invoice”/“water”). Only emails that actually contain **invoice links** in the body are stored and turned into bills; all others are skipped. Forwarded emails (e.g. from `coastmetering@gmail.com`) are accepted by default; add more via `ESCONDIDO_IMAP_ALLOWED_FORWARDERS`. Choose one:
+The workflow logs into **one** email account via IMAP and looks for Escondido/Invoice Cloud bill emails there. The inbox can receive other mail too — the cron only processes messages whose **From** address looks like a bill sender (e.g. contains `invoicecloud`, `escondido`, or a noreply address with “bill”/“invoice”/“water”). Only emails that actually contain **invoice links** in the body are stored and turned into bills; all others are skipped. Forwarded emails (e.g. from `coastmetering@gmail.com`) are accepted by default; add more via `ESCONDIDO_IMAP_ALLOWED_FORWARDERS`. Choose one:
 
 - **Option A:** Use the same Gmail (or other) inbox that already receives the bill notifications. No forwarding needed.
-- **Option B:** Create a dedicated Gmail (e.g. `yourcompany.bills@gmail.com`) and in your main inbox set up **Gmail → Settings → Forwarding** so that emails from Invoice Cloud / Escondido are forwarded to this address. Then the cron will use this dedicated inbox.
+- **Option B:** Create a dedicated Gmail (e.g. `yourcompany.bills@gmail.com`) and in your main inbox set up **Gmail → Settings → Forwarding** so that emails from Invoice Cloud / Escondido are forwarded to this address. Then the workflow will use this dedicated inbox.
 
 You’ll need the **login email** and **password** (or App Password) for whichever inbox you choose.
 
@@ -36,28 +38,55 @@ If the inbox is **Gmail** and you have 2-Step Verification on:
 5. Copy the **16-character password** (no spaces). This is what you’ll set as `ESCONDIDO_IMAP_PASSWORD`.  
    If you don’t have 2FA, you can use your normal Gmail password, but an App Password is more secure.
 
-### Step 4: Create a secret for the cron (CRON_SECRET)
+### Step 4: Add GitHub Actions secrets
 
-1. Pick a long random string (e.g. 32+ characters). You can generate one:  
-   `openssl rand -hex 32` in a terminal, or use a password generator.
-2. You’ll add this as the `CRON_SECRET` env var in Step 6. Vercel Cron will send this when it hits your endpoint so the route can verify the request is from your cron.
+1. In your repo: **Settings** → **Secrets and variables** → **Actions**.
+2. Add these **repository secrets** (name exactly as below):
 
-### Step 5: Collect the values you’ll set
+| Secret name | What to put |
+|-------------|-------------|
+| **ESCONDIDO_IMAP_HOST** | `imap.gmail.com` (Gmail) or `outlook.office365.com` (Outlook). |
+| **ESCONDIDO_IMAP_USER** | Full email address of the inbox that receives (or is forwarded) Escondido bill emails. |
+| **ESCONDIDO_IMAP_PASSWORD** | Password or **App Password** from Step 3 (Gmail with 2FA: use App Password). |
+| **NEXT_PUBLIC_SUPABASE_URL** | Supabase → Project Settings → API → Project URL. |
+| **SUPABASE_SERVICE_ROLE_KEY** | Supabase → Project Settings → API → `service_role` (secret) key. |
 
-Fill this out for yourself (then you’ll paste them into Vercel in Step 6):
+Optional: `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_MAX_EMAILS`, `ESCONDIDO_IMAP_DAYS_BACK`, `ESCONDIDO_IMAP_ALLOWED_FORWARDERS` — the script uses defaults if not set.
+
+### Step 5: Run the workflow
+
+- **Schedule:** The workflow **Ingest Escondido bill emails** runs **daily at 12:00 UTC** (see `.github/workflows/ingest-escondido-emails.yml`).
+- **Manual run:** **Actions** → **Ingest Escondido bill emails** → **Run workflow**.
+
+### Step 6: Watch debug output
+
+Every run uses **watch debug** so you can see what the ingest did:
+
+- **Actions** → open the latest **Ingest Escondido bill emails** run → **ingest** job. The step "Run Escondido email ingest (with watch debug)" prints link extraction, first-page parse (account, pdfUrl), "Following View Invoice link" and redirect final URL, any rejected compliance/feed URL, and the final `pdf_url` stored per bill.
+- **Artifact:** Download **escondido-ingest-debug** to get `escondido-ingest-debug.log` with the same lines (timestamped).
+
+Use this to confirm the correct account number and that `pdf_url` is a real document URL (e.g. `docs.onlinebiller.com`), not a feed or compliance URL.
+
+---
+
+*(The following steps 5–8 about Vercel cron are kept for reference if you want to trigger ingest via the API route.)*
+
+### Step 5 (Vercel): Collect the values you'll set
+
+Fill this out for yourself (then you'll paste them into Vercel in Step 6):
 
 | Variable | What to put | Where you get it |
 |----------|-------------|-------------------|
 | **CRON_SECRET** | The random secret from Step 4 | You created it. |
-| **ESCONDIDO_IMAP_HOST** | `imap.gmail.com` (Gmail) or `outlook.office365.com` (Outlook) or your provider’s IMAP host | Gmail: `imap.gmail.com`. [Outlook](https://support.microsoft.com/en-us/office/pop-imap-and-smtp-settings-8361e398-8af4-4e97-b147-6c6c4ac95353): `outlook.office365.com`. |
+| **ESCONDIDO_IMAP_HOST** | `imap.gmail.com` (Gmail) or `outlook.office365.com` (Outlook) or your provider's IMAP host | Gmail: `imap.gmail.com`. [Outlook](https://support.microsoft.com/en-us/office/pop-imap-and-smtp-settings-8361e398-8af4-4e97-b147-6c6c4ac95353): `outlook.office365.com`. |
 | **ESCONDIDO_IMAP_USER** | Full email address of the inbox | The address that receives (or is forwarded) the Escondido bill emails. |
 | **ESCONDIDO_IMAP_PASSWORD** | Password for that inbox | Normal password, or the **App Password** from Step 3 (recommended for Gmail with 2FA). |
 | **NEXT_PUBLIC_SUPABASE_URL** | Your Supabase project URL | Supabase → Project Settings → API → Project URL. |
 | **SUPABASE_SERVICE_ROLE_KEY** | Your Supabase service role key | Supabase → Project Settings → API → `service_role` (secret) key. |
 
-You do **not** need to set `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_TLS`, etc. unless you’re using a custom mail server; the defaults (port 993, TLS on) work for Gmail and Outlook.
+You do **not** need to set `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_TLS`, etc. unless you're using a custom mail server; the defaults (port 993, TLS on) work for Gmail and Outlook.
 
-### Step 6: Set environment variables in Vercel
+### Step 6 (Vercel): Set environment variables in Vercel
 
 1. Go to [Vercel Dashboard](https://vercel.com/dashboard) → your **project** → **Settings** → **Environment Variables**.
 2. Add each variable from the table in Step 5:
@@ -66,12 +95,12 @@ You do **not** need to set `ESCONDIDO_IMAP_PORT`, `ESCONDIDO_IMAP_TLS`, etc. unl
    - **Environment:** check Production (and Preview if you want the cron in preview deployments).
 3. Click **Save** for each. If you change any, redeploy the project so the new values are used.
 
-### Step 7: Deploy and confirm the cron exists
+### Step 7 (Vercel): Deploy and confirm the cron exists
 
 1. Deploy your app (e.g. push to the branch connected to Vercel, or trigger a deploy from the Vercel dashboard).
 2. In Vercel: **Settings** → **Crons** (or the Cron Jobs section). You should see one job that runs daily (e.g. at 12:00 UTC) and calls `/api/cron/ingest-escondido-emails`. No need to create it manually if `vercel.json` in the repo already defines it.
 
-### Step 8: (Optional) Test the cron by hand
+### Step 8 (Optional): Test the cron by hand
 
 To run the ingest once without waiting for the schedule:
 
@@ -93,9 +122,15 @@ To run the ingest once without waiting for the schedule:
 
 ---
 
+*(End of Vercel cron reference. Primary method is GitHub Actions above.)*
+
+
+
 ## How to verify it worked
 
-After deploying, use one or more of these:
+**When using GitHub Actions:** Open **Actions** → **Ingest Escondido bill emails** → latest run. The job log shows each step (link extraction, parse, redirect, pdf_url). Download the **escondido-ingest-debug** artifact for the full timestamped log. Check Supabase (`utility_bill_emails`, `utility_provider_bills`) for new rows.
+
+**Optional (Vercel API route):** If you still use the cron endpoint:
 
 **1. Trigger the cron manually**
 
@@ -145,7 +180,7 @@ Bills are attached to properties using `property_utility_accounts`. For Escondid
 
 ## Fully automated (overview)
 
-A **daily cron** connects to your email inbox via IMAP, fetches recent bill emails from Invoice Cloud / Escondido, and ingests them. No forwarding or webhook setup — just point the app at an inbox that receives the bill emails.
+The **Ingest Escondido bill emails** GitHub Action runs **daily at 12:00 UTC** and connects to your email inbox via IMAP, fetches recent bill emails from Invoice Cloud / Escondido, and ingests them. No forwarding or webhook setup — just add the secrets and point the workflow at an inbox that receives the bill emails.
 
 1. **Use an inbox that receives the bill emails**  
    Forward Escondido/Invoice Cloud notifications to a dedicated mailbox (e.g. `bills@yourdomain.com` or a Gmail account), or read from the same inbox that already gets them.

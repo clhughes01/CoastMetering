@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "fetch-escondido-bills": "tsx scripts/fetch-escondido-bills.ts",
+    "ingest-escondido-emails": "tsx scripts/run-escondido-email-ingest.ts",
     "import-utility-accounts": "tsx scripts/import-property-utility-accounts.ts"
   },
   "dependencies": {

@@ -1,6 +1,13 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/client"
 
 const UTILITY_KEY = "escondido_water"
+
+/** Log to console when ESCONDIDO_INGEST_DEBUG=1 (used by GitHub Actions / local debug) */
+function debugLog(...args: unknown[]) {
+  if (process.env.ESCONDIDO_INGEST_DEBUG === "1" || process.env.ESCONDIDO_INGEST_DEBUG === "true") {
+    console.log("[escondido-ingest]", ...args)
+  }
+}
 const INVOICE_DOMAIN = "invoicecloud.com"
 const DOCUMENT_DOMAIN = "onlinebiller.com"
 
@@ -227,6 +234,7 @@ export function parseInvoicePage(html: string, pageUrl: string): {
     }
   }
 
+  debugLog("parseInvoicePage", { pageUrl: pageUrl.slice(0, 80), accountNumber: accountNumber || "(none)", amountDue, dueDate, pdfUrl: pdfUrl ? pdfUrl.slice(0, 80) : null })
   return { accountNumber, amountDue, dueDate, periodStart, periodEnd, pdfUrl }
 }
 
@@ -242,6 +250,7 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
   }
 
   const links = extractInvoiceLinks(html, text)
+  debugLog("extractInvoiceLinks", links.length, links[0] ?? "(none)")
   if (links.length === 0) {
     return { ok: true, links_found: 0, results: [] }
   }
@@ -297,15 +306,19 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
       let res = await fetch(invoiceUrl, fetchOptions)
       let pageHtml = await res.text()
       let parsed = parseInvoicePage(pageHtml, invoiceUrl)
+      debugLog("after first page parse", { accountNumber: parsed.accountNumber || "(none)", pdfUrl: parsed.pdfUrl?.slice(0, 100) ?? "(none)" })
 
       // Step 2: "View invoice" on the summary page opens the document. Follow the link and use final URL only if it's the real bill (onlinebiller.com or PDF). Never use compliance/feed.
       const viewInvoiceUrl = parsed.pdfUrl
       if (viewInvoiceUrl && !viewInvoiceUrl.toLowerCase().endsWith(".pdf") && !isValidDocumentUrl(viewInvoiceUrl)) {
+        debugLog("following View Invoice link", viewInvoiceUrl.slice(0, 120))
         try {
           const res2 = await fetch(viewInvoiceUrl, fetchOptions)
           const contentType = res2.headers.get("content-type") ?? ""
           const finalUrl = res2.url || viewInvoiceUrl
+          debugLog("redirect final URL", finalUrl.slice(0, 120), "content-type", contentType.slice(0, 50))
           if (!isValidDocumentUrl(finalUrl) && (finalUrl.includes("compliance.") || finalUrl.includes("/feed"))) {
+            debugLog("rejected redirect (compliance/feed)", finalUrl.slice(0, 100))
             parsed = { ...parsed, pdfUrl: null }
           } else if (contentType.toLowerCase().includes("application/pdf")) {
             parsed = { ...parsed, pdfUrl: finalUrl }
@@ -348,7 +361,11 @@ export async function ingestEscondidoEmail(payload: EmailPayload): Promise<Inges
         billing_period_end: periodEnd,
         amount_due: parsed.amountDue >= 0 ? parsed.amountDue : 0,
         due_date: parsed.dueDate,
-        pdf_url: parsed.pdfUrl && isValidDocumentUrl(parsed.pdfUrl) ? parsed.pdfUrl : null,
+        pdf_url: (() => {
+          const url = parsed.pdfUrl && isValidDocumentUrl(parsed.pdfUrl) ? parsed.pdfUrl : null
+          debugLog("bill pdf_url", url ? url.slice(0, 100) : "(null)")
+          return url
+        })(),
         external_id: invoiceUrl.slice(0, 500),
         invoice_url: invoiceUrl,
         source_email_id: emailId,
