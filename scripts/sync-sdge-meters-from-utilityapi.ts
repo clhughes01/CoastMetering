@@ -161,8 +161,13 @@ async function main() {
       const uid = String(m?.uid ?? "").trim()
       if (!uid) continue
       const { error } = await supabase.from("property_sdge_utilityapi_meters").upsert(
-        { property_id, meter_uid: uid, updated_at: new Date().toISOString() },
-        { onConflict: "property_id,meter_uid", ignoreDuplicates: false }
+        {
+          property_id,
+          utility_key: UTILITY_KEY,
+          meter_uid: uid,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "property_id,utility_key,meter_uid", ignoreDuplicates: false }
       )
       if (error) {
         log("Upsert failed", property_id, uid, error.message)
