@@ -10,7 +10,7 @@
  *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  *
  * Optional:
- *   SDGE_BILLS_DAYS_BACK (default 60)
+ *   SDGE_BILLS_DAYS_BACK (default 50) — daily run looks back this many days for new/updated bills (UtilityAPI refresh schedule is configured in their dashboard).
  *   SDGE_UTILITYAPI_METERS_JSON — only used if SDGE_ALLOW_JSON_FALLBACK=1 (dev/testing).
  *   SDGE_BILLS_DEBUG=1, DEBUG_OUTPUT_FILE
  */
@@ -23,7 +23,7 @@ const UTILITY_KEY = "sdge_electric"
 const PDF_STORAGE_BUCKET = "sdge-bill-pdfs"
 
 const TOKEN = process.env.UTILITYAPI_TOKEN?.trim()
-const DAYS_BACK = Math.max(1, parseInt(process.env.SDGE_BILLS_DAYS_BACK ?? "60", 10))
+const DAYS_BACK = Math.max(1, parseInt(process.env.SDGE_BILLS_DAYS_BACK ?? "50", 10))
 const DEBUG = process.env.SDGE_BILLS_DEBUG === "1" || process.env.SDGE_BILLS_DEBUG === "true"
 const DEBUG_OUTPUT_FILE = process.env.DEBUG_OUTPUT_FILE?.trim()
 const ALLOW_JSON_FALLBACK = process.env.SDGE_ALLOW_JSON_FALLBACK === "1" || process.env.SDGE_ALLOW_JSON_FALLBACK === "true"
@@ -180,6 +180,7 @@ async function main() {
 
   let upserted = 0
   let downloaded = 0
+  let skippedPdf = 0
   let failed = 0
 
   for (const map of mappings) {
@@ -216,28 +217,39 @@ async function main() {
             continue
           }
 
-          // Download PDF from UtilityAPI files endpoint and store.
-          const pdfFileUrl = `https://utilityapi.com/api/v2/files/pdf_bill?uid=${encodeURIComponent(billUid)}`
-          let storedPdfUrl: string | null = null
-          try {
-            const pdf = await utilityApiGetBinary(pdfFileUrl)
-            const storagePath = `${UTILITY_KEY}/${billUid}.pdf`
-            const { error: uploadError } = await supabase.storage
-              .from(PDF_STORAGE_BUCKET)
-              .upload(storagePath, pdf.body, {
-                contentType: pdf.contentType.includes("pdf") ? "application/pdf" : pdf.contentType,
-                upsert: true,
-              })
-            if (uploadError) throw new Error(uploadError.message)
-            const { data: urlData } = supabase.storage.from(PDF_STORAGE_BUCKET).getPublicUrl(storagePath)
-            storedPdfUrl = urlData.publicUrl
-            downloaded++
-          } catch (e) {
-            // Still upsert bill even if PDF fails; we can retry later.
-            log("PDF download/upload failed for bill", billUid, e instanceof Error ? e.message : String(e))
-          }
-
           const externalId = `utilityapi:bill:${billUid}`.slice(0, 500)
+
+          const { data: existingBill } = await supabase
+            .from("utility_provider_bills")
+            .select("pdf_url")
+            .eq("property_id", propertyId)
+            .eq("utility_key", UTILITY_KEY)
+            .eq("external_id", externalId)
+            .maybeSingle()
+
+          let storedPdfUrl: string | null = (existingBill as { pdf_url: string | null } | null)?.pdf_url ?? null
+          if (storedPdfUrl) {
+            skippedPdf++
+            if (DEBUG) log("Bill already stored, skip PDF re-download", billUid)
+          } else {
+            const pdfFileUrl = `https://utilityapi.com/api/v2/files/pdf_bill?uid=${encodeURIComponent(billUid)}`
+            try {
+              const pdf = await utilityApiGetBinary(pdfFileUrl)
+              const storagePath = `${UTILITY_KEY}/${billUid}.pdf`
+              const { error: uploadError } = await supabase.storage
+                .from(PDF_STORAGE_BUCKET)
+                .upload(storagePath, pdf.body, {
+                  contentType: pdf.contentType.includes("pdf") ? "application/pdf" : pdf.contentType,
+                  upsert: true,
+                })
+              if (uploadError) throw new Error(uploadError.message)
+              const { data: urlData } = supabase.storage.from(PDF_STORAGE_BUCKET).getPublicUrl(storagePath)
+              storedPdfUrl = urlData.publicUrl
+              downloaded++
+            } catch (e) {
+              log("PDF download/upload failed for bill", billUid, e instanceof Error ? e.message : String(e))
+            }
+          }
 
           const { error: upsertError } = await supabase.from("utility_provider_bills").upsert(
             {
@@ -272,7 +284,7 @@ async function main() {
     }
   }
 
-  log("Done. upserted:", upserted, "pdfs stored:", downloaded, "failed:", failed)
+  log("Done. bill rows upserted:", upserted, "new PDFs stored:", downloaded, "existing PDFs reused:", skippedPdf, "failed:", failed)
 }
 
 main()

@@ -1,4 +1,4 @@
-# Fetch SDG&E electric bills daily via UtilityAPI.
+# Daily: sync meter mappings, then pull recent bills from UtilityAPI. Configure recurring UtilityAPI data refresh in their dashboard (not in this repo) to avoid extra API collection charges.
 name: Fetch SDG&E electric bills (UtilityAPI)
 on:
   schedule:
@@ -29,6 +29,7 @@ jobs:
       - name: Fetch SDG&E bills via UtilityAPI
         env:
           SDGE_BILLS_DEBUG: "1"
+          SDGE_BILLS_DAYS_BACK: "50"
           DEBUG_OUTPUT_FILE: "${{ github.workspace }}/sdge-bills-debug.log"
           UTILITYAPI_TOKEN: ${{ secrets.UTILITYAPI_TOKEN }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
