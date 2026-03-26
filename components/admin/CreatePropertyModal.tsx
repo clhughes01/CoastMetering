@@ -55,6 +55,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
     power_utility: '',
     gas_utility: '',
     water_account_number: '',
+    sdge_electric_account_number: '',
   })
 
   const addUnit = () => {
@@ -135,6 +136,18 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
         })
       }
 
+      if (formData.sdge_electric_account_number?.trim()) {
+        await fetch('/api/admin/property-utility-accounts', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            property_id: propertyId,
+            utility_key: 'sdge_electric',
+            account_number: formData.sdge_electric_account_number.trim(),
+          }),
+        })
+      }
+
       // Then, create all units
       const unitPromises = validUnits.map(unitNumber =>
         fetch('/api/units/create', {
@@ -171,6 +184,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
         power_utility: '',
         gas_utility: '',
         water_account_number: '',
+        sdge_electric_account_number: '',
       })
       setUnits([''])
       setSelectedManagerId('')
@@ -332,9 +346,40 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+            <p className="text-sm font-medium">Automated bill fetch — account numbers</p>
+            <p className="text-xs text-muted-foreground -mt-2">
+              Optional. Links provider bills to this property. Utility <span className="font-medium">names</span> are in the row below.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="water_account_number">Water account # (Escondido)</Label>
+                <Input
+                  id="water_account_number"
+                  type="text"
+                  value={formData.water_account_number}
+                  onChange={(e) => setFormData({ ...formData, water_account_number: e.target.value })}
+                  placeholder="Water bill account number"
+                  disabled={loading}
+                />
+              </div>
+              <div>
+                <Label htmlFor="sdge_electric_account_number">Electric account # (SDG&amp;E)</Label>
+                <Input
+                  id="sdge_electric_account_number"
+                  type="text"
+                  value={formData.sdge_electric_account_number}
+                  onChange={(e) => setFormData({ ...formData, sdge_electric_account_number: e.target.value })}
+                  placeholder="SDG&amp;E account or SAID (as on bill)"
+                  disabled={loading}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <Label htmlFor="water_utility">Water Utility</Label>
+              <Label htmlFor="water_utility">Water utility (name)</Label>
               <Input
                 id="water_utility"
                 type="text"
@@ -345,21 +390,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               />
             </div>
             <div>
-              <Label htmlFor="water_account_number">Water Account # (Escondido)</Label>
-              <Input
-                id="water_account_number"
-                type="text"
-                value={formData.water_account_number}
-                onChange={(e) => setFormData({ ...formData, water_account_number: e.target.value })}
-                placeholder="Account number for bill fetch"
-                disabled={loading}
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Optional. Enables automatic bill fetch for this property.
-              </p>
-            </div>
-            <div>
-              <Label htmlFor="power_utility">Power Utility</Label>
+              <Label htmlFor="power_utility">Electric utility (name)</Label>
               <Input
                 id="power_utility"
                 type="text"
@@ -370,7 +401,7 @@ export const CreatePropertyModal: React.FC<CreatePropertyModalProps> = ({
               />
             </div>
             <div>
-              <Label htmlFor="gas_utility">Gas Utility</Label>
+              <Label htmlFor="gas_utility">Gas utility (name)</Label>
               <Input
                 id="gas_utility"
                 type="text"

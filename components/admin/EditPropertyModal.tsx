@@ -57,6 +57,7 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
     power_utility: '',
     gas_utility: '',
     water_account_number: '',
+    sdge_electric_account_number: '',
   })
 
   useEffect(() => {
@@ -71,6 +72,7 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
         power_utility: property.power_utility || '',
         gas_utility: property.gas_utility || '',
         water_account_number: '',
+        sdge_electric_account_number: '',
       })
       loadUnits()
       loadUtilityAccounts()
@@ -85,9 +87,12 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
       const result = await res.json()
       if (result?.data?.length) {
         const escondido = result.data.find((r: { utility_key: string }) => r.utility_key === 'escondido_water')
-        if (escondido) {
-          setFormData((prev) => ({ ...prev, water_account_number: escondido.account_number ?? '' }))
-        }
+        const sdge = result.data.find((r: { utility_key: string }) => r.utility_key === 'sdge_electric')
+        setFormData((prev) => ({
+          ...prev,
+          water_account_number: escondido?.account_number ?? '',
+          sdge_electric_account_number: sdge?.account_number ?? '',
+        }))
       }
     } catch {
       // ignore
@@ -159,6 +164,16 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
           property_id: property.id,
           utility_key: 'escondido_water',
           account_number: formData.water_account_number?.trim() ?? '',
+        }),
+      })
+
+      await fetch('/api/admin/property-utility-accounts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          property_id: property.id,
+          utility_key: 'sdge_electric',
+          account_number: formData.sdge_electric_account_number?.trim() ?? '',
         }),
       })
 
@@ -292,9 +307,40 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+            <p className="text-sm font-medium">Automated bill fetch — account numbers</p>
+            <p className="text-xs text-muted-foreground -mt-2">
+              These save to your database and link bills to this property. Utility company names go in the fields below.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="water_account_number">Water account # (Escondido)</Label>
+                <Input
+                  id="water_account_number"
+                  type="text"
+                  value={formData.water_account_number}
+                  onChange={(e) => setFormData({ ...formData, water_account_number: e.target.value })}
+                  placeholder="Water bill account number"
+                  disabled={loading}
+                />
+              </div>
+              <div>
+                <Label htmlFor="sdge_electric_account_number">Electric account # (SDG&amp;E)</Label>
+                <Input
+                  id="sdge_electric_account_number"
+                  type="text"
+                  value={formData.sdge_electric_account_number}
+                  onChange={(e) => setFormData({ ...formData, sdge_electric_account_number: e.target.value })}
+                  placeholder="SDG&amp;E account or SAID (as on bill)"
+                  disabled={loading}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <Label htmlFor="water_utility">Water Utility</Label>
+              <Label htmlFor="water_utility">Water utility (name)</Label>
               <Input
                 id="water_utility"
                 type="text"
@@ -304,31 +350,18 @@ export const EditPropertyModal: React.FC<EditPropertyModalProps> = ({
               />
             </div>
             <div>
-              <Label htmlFor="water_account_number">Water Account # (Escondido)</Label>
-              <Input
-                id="water_account_number"
-                type="text"
-                value={formData.water_account_number}
-                onChange={(e) => setFormData({ ...formData, water_account_number: e.target.value })}
-                placeholder="Account number for bill fetch"
-                disabled={loading}
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Optional. Enables automatic bill fetch for this property.
-              </p>
-            </div>
-            <div>
-              <Label htmlFor="power_utility">Power Utility</Label>
+              <Label htmlFor="power_utility">Electric utility (name)</Label>
               <Input
                 id="power_utility"
                 type="text"
                 value={formData.power_utility}
                 onChange={(e) => setFormData({ ...formData, power_utility: e.target.value })}
+                placeholder="e.g. SDG&amp;E"
                 disabled={loading}
               />
             </div>
             <div>
-              <Label htmlFor="gas_utility">Gas Utility</Label>
+              <Label htmlFor="gas_utility">Gas utility (name)</Label>
               <Input
                 id="gas_utility"
                 type="text"

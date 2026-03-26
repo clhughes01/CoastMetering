@@ -10,6 +10,7 @@
     "fetch-escondido-bills": "tsx scripts/fetch-escondido-bills.ts",
     "ingest-escondido-emails": "tsx scripts/run-escondido-email-ingest.ts",
     "fetch-escondido-bill-pdfs": "tsx scripts/fetch-escondido-bill-pdf-urls.ts",
+    "sync-sdge-meters": "tsx scripts/sync-sdge-meters-from-utilityapi.ts",
     "fetch-sdge-bills": "tsx scripts/fetch-sdge-bills-utilityapi.ts",
     "import-utility-accounts": "tsx scripts/import-property-utility-accounts.ts"
   },

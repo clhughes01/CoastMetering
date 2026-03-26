@@ -11,8 +11,7 @@
  *
  * Optional:
  *   SDGE_BILLS_DAYS_BACK (default 60)
- *   SDGE_UTILITYAPI_METERS_JSON (fallback mapping when DB table empty):
- *     JSON array: [{ "property_id": "...", "meter_uid": "123" }, ...]
+ *   SDGE_UTILITYAPI_METERS_JSON — only used if SDGE_ALLOW_JSON_FALLBACK=1 (dev/testing).
  *   SDGE_BILLS_DEBUG=1, DEBUG_OUTPUT_FILE
  */
 import "dotenv/config"
@@ -21,12 +20,13 @@ import { createSupabaseAdminClient } from "@/lib/supabase/client"
 import * as fs from "fs"
 
 const UTILITY_KEY = "sdge_electric"
-const PDF_STORAGE_BUCKET = "utility-bill-pdfs"
+const PDF_STORAGE_BUCKET = "sdge-bill-pdfs"
 
 const TOKEN = process.env.UTILITYAPI_TOKEN?.trim()
 const DAYS_BACK = Math.max(1, parseInt(process.env.SDGE_BILLS_DAYS_BACK ?? "60", 10))
 const DEBUG = process.env.SDGE_BILLS_DEBUG === "1" || process.env.SDGE_BILLS_DEBUG === "true"
 const DEBUG_OUTPUT_FILE = process.env.DEBUG_OUTPUT_FILE?.trim()
+const ALLOW_JSON_FALLBACK = process.env.SDGE_ALLOW_JSON_FALLBACK === "1" || process.env.SDGE_ALLOW_JSON_FALLBACK === "true"
 
 type MeterMapRow = { property_id: string; meter_uid: string }
 
@@ -112,22 +112,47 @@ async function ensureBucket(supabase: ReturnType<typeof createSupabaseAdminClien
   if (error) log("Bucket create failed (may already exist):", error.message)
 }
 
-async function loadMeterMappings(supabase: ReturnType<typeof createSupabaseAdminClient>): Promise<MeterMapRow[]> {
+async function loadKnownPropertyIds(supabase: ReturnType<typeof createSupabaseAdminClient>): Promise<Set<string>> {
+  const { data, error } = await supabase.from("properties").select("id")
+  if (error) throw new Error(`Failed to load properties: ${error.message}`)
+  return new Set((data ?? []).map((r: { id: string }) => r.id))
+}
+
+/** Only mappings whose property_id exists in our `properties` table (never ingest for unknown tenants). */
+function filterMappingsToKnownProperties(rows: MeterMapRow[], validPropertyIds: Set<string>): MeterMapRow[] {
+  const out: MeterMapRow[] = []
+  let dropped = 0
+  for (const r of rows) {
+    if (validPropertyIds.has(r.property_id)) out.push(r)
+    else dropped++
+  }
+  if (dropped > 0) {
+    log("Dropped", dropped, "meter mapping(s) whose property_id is not in our database.")
+  }
+  return out
+}
+
+async function loadMeterMappings(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  validPropertyIds: Set<string>
+): Promise<MeterMapRow[]> {
   const { data, error } = await supabase
-    .from("property_utilityapi_meters")
+    .from("property_sdge_utilityapi_meters")
     .select("property_id, meter_uid")
-    .eq("utility_key", UTILITY_KEY)
-  if (error) throw new Error(`Failed to load property_utilityapi_meters: ${error.message}`)
-  const rows = (data ?? []) as MeterMapRow[]
+  if (error) throw new Error(`Failed to load property_sdge_utilityapi_meters: ${error.message}`)
+  const rows = filterMappingsToKnownProperties((data ?? []) as MeterMapRow[], validPropertyIds)
   if (rows.length > 0) return rows
+
+  if (!ALLOW_JSON_FALLBACK) return []
 
   const fallback = process.env.SDGE_UTILITYAPI_METERS_JSON?.trim()
   if (!fallback) return []
   try {
     const parsed = JSON.parse(fallback) as MeterMapRow[]
-    return (parsed || [])
+    const raw = (parsed || [])
       .filter((r) => typeof r?.property_id === "string" && typeof r?.meter_uid === "string")
       .map((r) => ({ property_id: r.property_id.trim(), meter_uid: String(r.meter_uid).trim() }))
+    return filterMappingsToKnownProperties(raw, validPropertyIds)
   } catch {
     log("SDGE_UTILITYAPI_METERS_JSON is not valid JSON; ignoring")
     return []
@@ -138,9 +163,12 @@ async function main() {
   const supabase = createSupabaseAdminClient()
   await ensureBucket(supabase)
 
-  const mappings = await loadMeterMappings(supabase)
+  const validPropertyIds = await loadKnownPropertyIds(supabase)
+  const mappings = await loadMeterMappings(supabase, validPropertyIds)
   if (mappings.length === 0) {
-    log("No SDG&E UtilityAPI meter mappings found. Add rows to property_utilityapi_meters (utility_key=sdge_electric).")
+    log(
+      "No SDG&E meter mappings for properties in this database. Add sdge_electric accounts in property_utility_accounts, run sync (npm run sync-sdge-meters), then re-run."
+    )
     return
   }
 

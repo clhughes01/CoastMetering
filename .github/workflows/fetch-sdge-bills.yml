@@ -18,6 +18,14 @@ jobs:
 
       - run: npm ci
 
+      - name: Sync SDG&E meter UIDs from UtilityAPI
+        env:
+          SDGE_SYNC_DEBUG: "1"
+          UTILITYAPI_TOKEN: ${{ secrets.UTILITYAPI_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/sync-sdge-meters-from-utilityapi.ts
+
       - name: Fetch SDG&E bills via UtilityAPI
         env:
           SDGE_BILLS_DEBUG: "1"
