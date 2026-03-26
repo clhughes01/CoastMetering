@@ -54,6 +54,42 @@ function toDateOnly(isoOrDate: string | null | undefined): string | null {
   return m ? m[1] : null
 }
 
+/** Bill period + amount: top-level keys vary; official docs use `base.bill_*` (see UtilityAPI Bills API). */
+function extractBillPeriodAndAmount(b: any): {
+  periodStart: string | null
+  periodEnd: string | null
+  dueDate: string | null
+  amountDue: number
+} {
+  const base = b?.base && typeof b.base === "object" ? b.base : null
+  const periodStart =
+    toDateOnly(b?.start) ||
+    toDateOnly(b?.start_date) ||
+    toDateOnly(b?.billing_start) ||
+    toDateOnly(base?.bill_start_date) ||
+    toDateOnly(base?.service_start) ||
+    null
+  const periodEnd =
+    toDateOnly(b?.end) ||
+    toDateOnly(b?.end_date) ||
+    toDateOnly(b?.billing_end) ||
+    toDateOnly(base?.bill_end_date) ||
+    toDateOnly(base?.service_end) ||
+    periodStart
+  const dueDate =
+    toDateOnly(b?.due) ||
+    toDateOnly(b?.due_date) ||
+    toDateOnly(base?.bill_due_date) ||
+    toDateOnly(base?.due_date) ||
+    null
+  let amountDue = 0
+  if (typeof b?.amount === "number") amountDue = b.amount
+  else if (typeof b?.total === "number") amountDue = b.total
+  else if (typeof b?.amount_due === "number") amountDue = b.amount_due
+  else if (base && typeof base.bill_total_cost === "number") amountDue = base.bill_total_cost
+  return { periodStart, periodEnd, dueDate, amountDue }
+}
+
 async function utilityApiGetJson<T>(url: string): Promise<T> {
   if (!TOKEN) throw new Error("Missing UTILITYAPI_TOKEN")
   const res = await fetch(url, {
@@ -198,18 +234,7 @@ async function main() {
           const billUid = String(b?.uid ?? "").trim()
           if (!billUid) continue
 
-          // Base bill fields vary; we rely on common timestamp keys and fall back conservatively.
-          const periodStart = toDateOnly(b?.start) || toDateOnly(b?.start_date) || toDateOnly(b?.billing_start) || null
-          const periodEnd = toDateOnly(b?.end) || toDateOnly(b?.end_date) || toDateOnly(b?.billing_end) || periodStart
-          const dueDate = toDateOnly(b?.due) || toDateOnly(b?.due_date) || null
-          const amountDue =
-            typeof b?.amount === "number"
-              ? b.amount
-              : typeof b?.total === "number"
-                ? b.total
-                : typeof b?.amount_due === "number"
-                  ? b.amount_due
-                  : 0
+          const { periodStart, periodEnd, dueDate, amountDue } = extractBillPeriodAndAmount(b)
 
           if (!periodStart || !periodEnd) {
             // We need a billing period for our unique constraint; skip if missing.
