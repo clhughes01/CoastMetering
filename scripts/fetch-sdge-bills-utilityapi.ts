@@ -90,6 +90,68 @@ function extractBillPeriodAndAmount(b: any): {
   return { periodStart, periodEnd, dueDate, amountDue }
 }
 
+/** Per UtilityAPI Files docs: use links from the API (`sources[].raw_url`); `pdf_bill?uid=` may 404. */
+function extractPdfRawUrlFromBill(b: any): string | null {
+  const sources = b?.sources
+  if (!Array.isArray(sources)) return null
+  for (const s of sources) {
+    if (!s || typeof s !== "object") continue
+    const raw = typeof (s as any).raw_url === "string" ? (s as any).raw_url.trim() : ""
+    if (!raw) continue
+    const t = typeof (s as any).type === "string" ? (s as any).type : ""
+    if (t === "pdf" || t === "raw_pdf" || t === "pdf_other" || t.startsWith("pdf")) return raw
+  }
+  for (const s of sources) {
+    const raw = typeof (s as any)?.raw_url === "string" ? (s as any).raw_url.trim() : ""
+    if (raw && raw.includes("utilityapi.com/api/v2/files/")) return raw
+  }
+  return null
+}
+
+/** List responses sometimes omit `sources`; paginate meter bills to find the same uid with file links. */
+async function findBillByUidInMeterListings(meterUid: string, billUid: string): Promise<any | null> {
+  let url =
+    `https://utilityapi.com/api/v2/bills?meters=${encodeURIComponent(meterUid)}&limit=500&order=latest_first`
+  for (let page = 0; page < 20 && url; page++) {
+    const listing = await utilityApiGetJson<{ bills: any[]; next: string | null }>(url)
+    const hit = (listing.bills ?? []).find((x) => String(x?.uid ?? "") === String(billUid))
+    if (hit) return hit
+    url = listing.next ?? ""
+  }
+  return null
+}
+
+async function downloadBillPdfBinary(b: any, billUid: string, meterUid: string): Promise<{ body: Uint8Array; contentType: string }> {
+  const candidates: string[] = []
+  const push = (u: string | null | undefined) => {
+    const s = typeof u === "string" ? u.trim() : ""
+    if (s && !candidates.includes(s)) candidates.push(s)
+  }
+
+  push(extractPdfRawUrlFromBill(b))
+  if (!candidates.length) {
+    const again = await findBillByUidInMeterListings(meterUid, billUid)
+    if (again) push(extractPdfRawUrlFromBill(again))
+  }
+  push(`https://utilityapi.com/api/v2/files/pdf_bill?uid=${encodeURIComponent(billUid)}`)
+
+  let lastErr: Error | null = null
+  for (const pdfUrl of candidates) {
+    try {
+      return await utilityApiGetBinary(pdfUrl)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      lastErr = e instanceof Error ? e : new Error(msg)
+      if (msg.includes("404")) {
+        if (DEBUG) log("PDF URL returned 404, trying next", pdfUrl)
+        continue
+      }
+      throw lastErr
+    }
+  }
+  throw lastErr ?? new Error("Could not download PDF for bill")
+}
+
 async function utilityApiGetJson<T>(url: string): Promise<T> {
   if (!TOKEN) throw new Error("Missing UTILITYAPI_TOKEN")
   const res = await fetch(url, {
@@ -257,9 +319,8 @@ async function main() {
             skippedPdf++
             if (DEBUG) log("Bill already stored, skip PDF re-download", billUid)
           } else {
-            const pdfFileUrl = `https://utilityapi.com/api/v2/files/pdf_bill?uid=${encodeURIComponent(billUid)}`
             try {
-              const pdf = await utilityApiGetBinary(pdfFileUrl)
+              const pdf = await downloadBillPdfBinary(b, billUid, meterUid)
               const storagePath = `${UTILITY_KEY}/${billUid}.pdf`
               const { error: uploadError } = await supabase.storage
                 .from(PDF_STORAGE_BUCKET)
