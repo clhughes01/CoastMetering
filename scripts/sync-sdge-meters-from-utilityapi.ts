@@ -114,6 +114,43 @@ async function fetchAllSdgeElectricMeters(): Promise<any[]> {
   return out
 }
 
+/**
+ * Avoid PostgREST upsert + onConflict: production DBs differ (renamed table has a triple
+ * unique; fresh CREATE has only (property_id, meter_uid)). GitHub Actions does not apply
+ * migrations, so we match on property_id + meter_uid and update or insert.
+ */
+async function upsertSdgeMeterMapping(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  property_id: string,
+  meter_uid: string
+): Promise<{ error: Error | null }> {
+  const updated_at = new Date().toISOString()
+  const { data: existing, error: selErr } = await supabase
+    .from("property_sdge_utilityapi_meters")
+    .select("id")
+    .eq("property_id", property_id)
+    .eq("meter_uid", meter_uid)
+    .maybeSingle()
+
+  if (selErr) return { error: new Error(selErr.message) }
+
+  if (existing?.id) {
+    const { error } = await supabase
+      .from("property_sdge_utilityapi_meters")
+      .update({ utility_key: UTILITY_KEY, updated_at })
+      .eq("id", existing.id)
+    return { error: error ? new Error(error.message) : null }
+  }
+
+  const { error } = await supabase.from("property_sdge_utilityapi_meters").insert({
+    property_id,
+    utility_key: UTILITY_KEY,
+    meter_uid,
+    updated_at,
+  })
+  return { error: error ? new Error(error.message) : null }
+}
+
 async function main() {
   const supabase = createSupabaseAdminClient()
 
@@ -160,15 +197,7 @@ async function main() {
     for (const m of matches) {
       const uid = String(m?.uid ?? "").trim()
       if (!uid) continue
-      const { error } = await supabase.from("property_sdge_utilityapi_meters").upsert(
-        {
-          property_id,
-          utility_key: UTILITY_KEY,
-          meter_uid: uid,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "property_id,utility_key,meter_uid", ignoreDuplicates: false }
-      )
+      const { error } = await upsertSdgeMeterMapping(supabase, property_id, uid)
       if (error) {
         log("Upsert failed", property_id, uid, error.message)
       } else {
