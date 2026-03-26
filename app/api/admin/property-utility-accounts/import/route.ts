@@ -1,12 +1,13 @@
 import { createSupabaseAdminClient, createSupabaseClientFromCookies } from "@/lib/supabase/client"
 import { NextRequest, NextResponse } from "next/server"
 
-const UTILITY_KEY = "escondido_water"
+const DEFAULT_UTILITY_KEY = "escondido_water"
 
 /**
  * POST /api/admin/property-utility-accounts/import
  * Bulk import property → utility account mapping (e.g. Escondido).
- * Body: JSON { rows: [ { property_id, account_number } ] } or CSV text (property_id,account_number + data rows).
+ * Body: JSON { rows: [ { property_id, utility_key?, account_number } ] } or CSV text with columns:
+ *   property_id,account_number,(optional)utility_key
  * Admin only.
  */
 export async function POST(request: NextRequest) {
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
     }
 
     const contentType = request.headers.get("content-type") ?? ""
-    let rows: { property_id: string; account_number: string }[] = []
+    let rows: { property_id: string; account_number: string; utility_key?: string }[] = []
 
     if (contentType.includes("application/json")) {
       const body = await request.json()
@@ -41,8 +42,13 @@ export async function POST(request: NextRequest) {
       for (const r of raw) {
         const property_id = r?.property_id ?? r?.propertyId
         const account_number = r?.account_number ?? r?.accountNumber
+        const utility_key = r?.utility_key ?? r?.utilityKey
         if (typeof property_id === "string" && typeof account_number === "string") {
-          rows.push({ property_id: property_id.trim(), account_number: String(account_number).trim() })
+          rows.push({
+            property_id: property_id.trim(),
+            account_number: String(account_number).trim(),
+            utility_key: typeof utility_key === "string" ? utility_key.trim() : undefined,
+          })
         }
       }
     } else if (contentType.includes("text/csv") || contentType.includes("text/plain")) {
@@ -64,12 +70,14 @@ export async function POST(request: NextRequest) {
         )
       const idxId = header.split(",").map((h) => h.trim()).indexOf("property_id")
       const idxAccount = header.split(",").map((h) => h.trim()).indexOf("account_number")
+      const idxUtility = header.split(",").map((h) => h.trim()).indexOf("utility_key")
       for (let i = 1; i < lines.length; i++) {
         const cells = lines[i]!.split(",").map((c) => c.trim().replace(/^"|"$/g, ""))
         const property_id = cells[idxId]
         const account_number = cells[idxAccount]
+        const utility_key = idxUtility >= 0 ? cells[idxUtility] : undefined
         if (property_id && account_number) {
-          rows.push({ property_id, account_number })
+          rows.push({ property_id, account_number, utility_key: utility_key || undefined })
         }
       }
     }
@@ -84,9 +92,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No valid rows to import" }, { status: 400 })
     }
 
-    const toInsert = rows.map(({ property_id, account_number }) => ({
+    const toInsert = rows.map(({ property_id, account_number, utility_key }) => ({
       property_id,
-      utility_key: UTILITY_KEY,
+      utility_key: utility_key || DEFAULT_UTILITY_KEY,
       account_number,
     }))
 

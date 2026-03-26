@@ -1,0 +1,37 @@
+# Fetch SDG&E electric bills daily via UtilityAPI.
+name: Fetch SDG&E electric bills (UtilityAPI)
+on:
+  schedule:
+    - cron: "20 12 * * *"
+  workflow_dispatch:
+
+jobs:
+  fetch-sdge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Fetch SDG&E bills via UtilityAPI
+        env:
+          SDGE_BILLS_DEBUG: "1"
+          DEBUG_OUTPUT_FILE: "${{ github.workspace }}/sdge-bills-debug.log"
+          UTILITYAPI_TOKEN: ${{ secrets.UTILITYAPI_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx scripts/fetch-sdge-bills-utilityapi.ts
+
+      - name: Upload debug log
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdge-bills-debug
+          path: sdge-bills-debug.log
+
